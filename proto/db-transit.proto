@@ -1,0 +1,55 @@
+syntax = "proto3";
+package db_transit;
+
+service Schedule{
+  rpc GetSchedule(ScheduleRequest) returns (ScheduleResponse);
+}
+
+message ScheduleRequest {
+  optional uint32 timestamp = 1;
+}
+
+message ScheduleResponse {
+  repeated Route routes = 1;
+  repeated Stop stops = 2;
+  repeated Shape shapes = 3;
+}
+
+message Route {
+  optional string route_id = 1;
+  repeated Trip trips = 2;
+}
+
+message Trip {
+  optional string trip_id = 1;
+  optional string headsign = 2;
+  optional string shape_id = 3;
+  repeated StopTime stop_times = 4;
+  optional uint32 direction = 5;
+}
+
+message StopTime {
+  optional string stop_id = 1;
+  optional string arrival_time = 2;
+  optional string departure_time = 3;
+  optional uint32 stop_sequence = 4;
+}
+
+message Stop {
+  optional string stop_id = 1;
+  optional string stop_name = 2;
+  optional Position position = 3;
+  optional string parent_stop_id = 4;
+  repeated string route_ids = 5;
+}
+
+message Shape {
+  optional string shape_id = 1;
+  repeated Position points = 2;
+}
+
+message Position {
+  optional double lat = 1;
+  optional double lon = 2;
+}
+
