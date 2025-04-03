@@ -3,18 +3,39 @@ name = "transit-server"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]] # Bin to run the HelloWorld gRPC server
+[[bin]] # Bin to run the transit gRPC server
 name = "server"
 path = "src/server.rs"
 
-[[bin]] # Bin to run the HelloWorld gRPC client
+[[bin]] # Bin to run the testing gRPC client
 name = "client"
 path = "src/client.rs"
 
 [dependencies]
+# gRPC server
 tonic = "*"
+
+# protobuf codegen
 prost = "0.13"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
+# async runtime. time feature for `sleep`
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "time"] }
+
+# easy http client, should probably move to something simpler eventually
+reqwest = "0.12.15"
+
+# unzip the gtfs schedule zipfile
+zip = "2.6.0"
+
+# personal parsing library
+gtfs-parsing = { git = "https://github.com/DylanBulfin/gtfs-parsing", branch = "main" }
+
+# hashing update file to check for equality
+blake3 = "1.8.1"
+
+# handle time comparisons (checking when to update, converting time zones)
+chrono = "0.4.40"
 
 [build-dependencies]
+# client/server codegen additional requirements
 tonic-build = "*"
