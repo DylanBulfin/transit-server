@@ -6,6 +6,7 @@ use db_transit::{
     schedule_server::Schedule,
 };
 use gtfs_parsing::schedule::{calendar::ExceptionType, trips::DirectionType};
+use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 
 pub mod db_transit {
@@ -13,15 +14,9 @@ pub mod db_transit {
 }
 
 #[derive(Debug, Default)]
-pub struct ScheduleService {
-    pub schedule: ScheduleResponse,
-}
+pub struct ScheduleService {}
 
-impl ScheduleService {
-    pub fn new(schedule: ScheduleResponse) -> Self {
-        Self { schedule }
-    }
-}
+pub static UPDATE_LOCK: RwLock<Option<ScheduleResponse>> = RwLock::const_new(None);
 
 impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleResponse {
     type Error = String;
@@ -38,6 +33,12 @@ impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleResponse {
             transfers,
             agencies,
         } = value;
+
+        println!(
+            "New update contains {} trip entries and {} stop_times entries total",
+            trips.len(),
+            stop_times.len()
+        );
 
         if agencies.len() > 1 {
             Err("Uh-oh")?
@@ -111,6 +112,12 @@ impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleResponse {
                 }
             }
         }
+
+        println!(
+            "New update contains {} trip entries and {} stop_times entries",
+            trips.len(),
+            stop_times_map.len()
+        );
 
         // Organized by route_id
         let mut trip_map: HashMap<String, Vec<Trip>> = HashMap::new();
@@ -220,6 +227,11 @@ impl Schedule for ScheduleService {
         &self,
         _request: Request<ScheduleRequest>,
     ) -> Result<Response<ScheduleResponse>, Status> {
-        unimplemented!()
+        UPDATE_LOCK
+            .read()
+            .await
+            .clone()
+            .ok_or(Status::from_error("Unable to acquire read lock".into()))
+            .map(|s| Response::new(s))
     }
 }

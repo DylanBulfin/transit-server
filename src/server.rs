@@ -1,11 +1,11 @@
-use std::{
-    io::Cursor,
-    time::Duration,
-};
+use std::{io::Cursor, time::Duration};
 
+use chrono::{DateTime, Days, Timelike};
 use chrono::{Local, Utc};
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tonic::transport::Server;
+use chrono_tz::{America::New_York, Tz};
+use tokio::time::sleep;
+use tonic::{codec::CompressionEncoding, transport::Server};
+use transit_server::shared::{self, UPDATE_LOCK};
 use zip::ZipArchive;
 
 use transit_server::{
@@ -17,6 +17,33 @@ use transit_server::{
 };
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
+const UPDATE_MINUTE: u32 = 35;
+
+fn get_nyc_datetime() -> DateTime<Tz> {
+    let curr_time = Utc::now();
+    curr_time.with_timezone(&New_York)
+}
+
+fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
+    if dt.minute() >= UPDATE_MINUTE {
+        if dt.hour() == 23 {
+            // Next update will wrap
+            dt.checked_add_days(Days::new(1))
+                .unwrap_or_else(|| panic!("Unable to add day to date: {}", dt))
+                .with_hour(0)
+                .unwrap()
+                .with_minute(UPDATE_MINUTE)
+                .unwrap()
+        } else {
+            dt.with_hour(dt.hour() + 1)
+                .unwrap()
+                .with_minute(UPDATE_MINUTE)
+                .unwrap()
+        }
+    } else {
+        dt.with_minute(UPDATE_MINUTE).unwrap() // should be infallible
+    }
+}
 
 /// Get the current MTA zip file, check it for differences using the optional hash, and process it
 async fn get_update(
@@ -40,87 +67,82 @@ async fn get_update(
     }
 }
 
-async fn update_loop(tx: Sender<ScheduleResponse>) -> Result<(), ScheduleError> {
+async fn update_loop() -> Result<(), ScheduleError> {
     let (mut curr_schedule, mut curr_hash) = get_update(None)
         .await?
         .expect("Unable to get initial schedule");
 
-    tx.send(curr_schedule).await.map_err(|e| e.to_string())?;
+    // Send initial schedule to waiting server loop
+    let update_global = async |sch: ScheduleResponse| {
+        println!("Boutta grab lock");
+        let mut lock = shared::UPDATE_LOCK.write().await;
+        *lock = Some(sch.clone());
+        println!("Boutta release lock");
+    };
+
+    update_global(curr_schedule).await;
+
+    // Calculate the next update time, from testing it seems like updates happen around the HH:30
+    // mark
+    let mut next_update = get_next_update(get_nyc_datetime());
 
     loop {
-        match get_update(Some(curr_hash)).await? {
-            Some((new_schedule, new_hash)) => {
-                println!("Found new update at {}", Utc::now());
-                curr_schedule = new_schedule;
-                curr_hash = new_hash;
-                tx.send(curr_schedule).await.map_err(|e| e.to_string())?;
+        if get_nyc_datetime() >= next_update {
+            match get_update(Some(curr_hash)).await? {
+                Some((new_schedule, new_hash)) => {
+                    println!("Found new update at {}", Utc::now());
+                    curr_schedule = new_schedule;
+                    curr_hash = new_hash;
+                    update_global(curr_schedule).await;
+                }
+                None => println!("No new update at {}", Utc::now()),
             }
-            None => println!("No new update at {}", Utc::now()),
-        }
 
-        tokio::time::sleep(Duration::new(300, 0)).await;
+            next_update = get_next_update(get_nyc_datetime());
+        }
     }
 }
 
-async fn server_loop(mut rx: Receiver<ScheduleResponse>) -> Result<(), ScheduleError> {
+async fn server_loop() -> Result<(), ScheduleError> {
     println!("Server waiting for initial schedule");
     // Try to get initial schedule
-    let mut curr_schedule = match rx.recv().await {
-        Some(cs) => cs,
-        None => return Err("Unable to get the schedule in server thread")?,
-    };
+    while let None = *UPDATE_LOCK.read().await {
+        sleep(Duration::new(1, 0)).await;
+    }
 
-    println!("Server thread recieved new schedule at {}", Local::now());
+    println!(
+        "Server thread recieved initial schedule at {}",
+        Local::now()
+    );
 
     let addr = "[::1]:50051".parse()?;
 
-    let mut server_future = tokio::spawn(async move {
-        let service = ScheduleService::new(curr_schedule);
+    Server::builder()
+        .add_service(
+            ScheduleServer::new(ScheduleService::default())
+                .send_compressed(CompressionEncoding::Gzip),
+        )
+        .serve(addr)
+        .await?;
 
-        Server::builder()
-            .add_service(ScheduleServer::new(service))
-            .serve(addr)
-            .await
-            .expect("Unable to start server");
-    });
-
-    loop {
-        // Check for updated schedule
-        curr_schedule = match rx.recv().await {
-            Some(cs) => cs,
-            None => return Err("Unable to get the schedule in server thread")?,
-        };
-
-        println!("Server thread recieved new schedule at {}", Local::now());
-
-        let addr = "[::1]:50051".parse()?;
-
-        server_future.abort();
-        server_future = tokio::spawn(async move {
-            let service = ScheduleService::new(curr_schedule);
-
-            Server::builder()
-                .add_service(ScheduleServer::new(service))
-                .serve(addr)
-                .await
-                .expect("Unable to start server");
-        });
-    }
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), ScheduleError> {
     loop {
-        let (tx, rx) = mpsc::channel(1);
-
-        let server = tokio::spawn(async move { server_loop(rx).await.unwrap() });
-        let updater = tokio::spawn(async move { update_loop(tx).await.unwrap() });
+        let server = tokio::spawn(async move { server_loop().await.unwrap() });
+        let updater = tokio::spawn(async move { update_loop().await.unwrap() });
 
         while !server.is_finished() && !updater.is_finished() {
-            tokio::time::sleep(Duration::new(5, 0)).await;
+            sleep(Duration::new(5, 0)).await;
         }
 
         server.abort();
         updater.abort();
+
+        while !server.is_finished() || !updater.is_finished() {
+            sleep(Duration::new(0, 1_000_000)).await;
+        }
     }
 }

@@ -16,7 +16,7 @@ path = "src/client.rs"
 
 [dependencies]
 # gRPC server
-tonic = "*"
+tonic = {version = "*", features = ["gzip"]}
 
 # protobuf codegen
 prost = "0.13"
@@ -38,6 +38,7 @@ blake3 = "1.8.1"
 
 # handle time comparisons (checking when to update, converting time zones)
 chrono = "0.4.40"
+chrono-tz = "0.10.3"
 
 [build-dependencies]
 # client/server codegen additional requirements

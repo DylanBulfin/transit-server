@@ -11,6 +11,7 @@ pub enum ScheduleError {
     ZipError(ZipError),
     ReqwestError(reqwest::Error),
     AddrParseError(AddrParseError),
+    TransferError(tonic::transport::Error),
 
     RawError(String),
 }
@@ -36,6 +37,12 @@ impl From<reqwest::Error> for ScheduleError {
 impl From<AddrParseError> for ScheduleError {
     fn from(value: AddrParseError) -> Self {
         Self::AddrParseError(value)
+    }
+}
+
+impl From<tonic::transport::Error> for ScheduleError {
+    fn from(value: tonic::transport::Error) -> Self {
+        Self::TransferError(value)
     }
 }
 
