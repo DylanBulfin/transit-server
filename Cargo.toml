@@ -3,6 +3,9 @@ name = "transit-server"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "transit_server"
+
 [[bin]] # Bin to run the transit gRPC server
 name = "server"
 path = "src/server.rs"
