@@ -1,4 +1,3 @@
-#![allow(unreachable_code)]
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
     error::Error,
@@ -276,17 +275,16 @@ async fn update_loop(tx: Sender<ScheduleResponse>) -> Result<(), String> {
                 curr_schedule = new_schedule;
                 curr_hash = new_hash;
                 tx.send(curr_schedule).await.map_err(|e| e.to_string())?;
-
-                tokio::time::sleep(Duration::new(300, 0)).await;
             }
             None => println!("No new update at {}", Utc::now()),
         }
-    }
 
-    Ok(())
+        tokio::time::sleep(Duration::new(300, 0)).await;
+    }
 }
 
 async fn server_loop(mut rx: Receiver<ScheduleResponse>) -> Result<(), Box<dyn Error>> {
+    println!("Server waiting for initial schedule");
     // Try to get initial schedule
     let mut curr_schedule = match rx.recv().await {
         Some(cs) => cs,
@@ -329,8 +327,6 @@ async fn server_loop(mut rx: Receiver<ScheduleResponse>) -> Result<(), Box<dyn E
                 .expect("Unable to start server");
         });
     }
-
-    Ok(())
 }
 
 #[tokio::main]
@@ -342,8 +338,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let updater = tokio::spawn(async move { update_loop(tx).await.unwrap() });
 
         let _ = server.await;
+
+        println!("Server exiting");
         let _ = updater.await;
     }
-
-    unreachable!()
 }
