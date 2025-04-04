@@ -41,6 +41,7 @@ message Stop {
   optional Position position = 3;
   optional string parent_stop_id = 4;
   repeated string route_ids = 5;
+  repeated Transfer transfers_from = 6;
 }
 
 message Shape {
@@ -53,3 +54,8 @@ message Position {
   optional double lon = 2;
 }
 
+message Transfer {
+  optional string from_stop_id = 1;
+  optional string to_stop_id = 2;
+  optional uint32 min_transfer_time = 3;
+}
