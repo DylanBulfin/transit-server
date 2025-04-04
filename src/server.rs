@@ -1,26 +1,20 @@
+#![allow(unreachable_code)]
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
     error::Error,
-    fs::File,
-    io::{BufReader, Cursor, Read},
-    task::Poll,
-    time::{Duration, SystemTime},
+    io::Cursor,
+    time::Duration,
 };
 
-use chrono::{DateTime, Datelike, Local, Utc};
+use chrono::{Datelike, Local, Utc};
 use db_transit::{
     Position, Route, ScheduleRequest, ScheduleResponse, Shape, Stop, StopTime, Transfer, Trip,
     schedule_server::{Schedule, ScheduleServer},
 };
 use gtfs_parsing::schedule::{calendar::ExceptionType, trips::DirectionType};
-use prost::bytes::Buf;
-use tokio::{
-    net::TcpStream,
-    sync::mpsc::{self, Receiver, Sender},
-    time::sleep,
-};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tonic::{Request, Response, Status, transport::Server};
-use zip::{ZipArchive, read::root_dir_common_filter};
+use zip::ZipArchive;
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
 
@@ -28,8 +22,16 @@ pub mod db_transit {
     tonic::include_proto!("db_transit"); // The string specified here must match the proto package name
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ScheduleService {}
+#[derive(Debug, Default)]
+pub struct ScheduleService {
+    pub schedule: ScheduleResponse,
+}
+
+impl ScheduleService {
+    pub fn new(schedule: ScheduleResponse) -> Self {
+        Self { schedule }
+    }
+}
 
 impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleResponse {
     type Error = String;
@@ -46,6 +48,10 @@ impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleResponse {
             transfers,
             agencies,
         } = value;
+
+        if agencies.len() > 1 {
+            Err("Uh-oh")?
+        }
 
         let curr_date = Local::now().date_naive();
         let weekday = curr_date.weekday();
@@ -148,19 +154,22 @@ impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleResponse {
             })
             .collect();
 
-        let final_shapes = shapes.into_iter().map(|s| {
-            let gtfs_parsing::schedule::shapes::Shape { shape_id, points } = s;
-            Shape {
-                shape_id: Some(shape_id),
-                points: points
-                    .into_iter()
-                    .map(|p| Position {
-                        lat: Some(p.shape_pt_lat),
-                        lon: Some(p.shape_pt_lon),
-                    })
-                    .collect(),
-            }
-        }).collect();
+        let final_shapes = shapes
+            .into_iter()
+            .map(|s| {
+                let gtfs_parsing::schedule::shapes::Shape { shape_id, points } = s;
+                Shape {
+                    shape_id: Some(shape_id),
+                    points: points
+                        .into_iter()
+                        .map(|p| Position {
+                            lat: Some(p.shape_pt_lat),
+                            lon: Some(p.shape_pt_lon),
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
 
         // Map transfers by from_stop_id for convenience
         let mut transfer_map: HashMap<String, Vec<Transfer>> = HashMap::new();
@@ -182,27 +191,30 @@ impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleResponse {
             }
         }
 
-        let final_stops = stops.into_iter().map(|s| Stop {
-            transfers_from: transfer_map.get(&s.stop_id).cloned().unwrap_or(vec![]),
-            stop_id: Some(s.stop_id),
-            stop_name: s.stop_name,
-            position: Some(Position {
-                lat: Some(
-                    s.stop_lat
-                        .unwrap_or("0.0".to_string())
-                        .parse::<f64>()
-                        .unwrap_or(0.0),
-                ),
-                lon: Some(
-                    s.stop_lon
-                        .unwrap_or("0.0".to_string())
-                        .parse::<f64>()
-                        .unwrap_or(0.0),
-                ),
-            }),
-            parent_stop_id: s.parent_station,
-            route_ids: vec![], //TODO actually calculate these
-        }).collect();
+        let final_stops = stops
+            .into_iter()
+            .map(|s| Stop {
+                transfers_from: transfer_map.get(&s.stop_id).cloned().unwrap_or(vec![]),
+                stop_id: Some(s.stop_id),
+                stop_name: s.stop_name,
+                position: Some(Position {
+                    lat: Some(
+                        s.stop_lat
+                            .unwrap_or("0.0".to_string())
+                            .parse::<f64>()
+                            .unwrap_or(0.0),
+                    ),
+                    lon: Some(
+                        s.stop_lon
+                            .unwrap_or("0.0".to_string())
+                            .parse::<f64>()
+                            .unwrap_or(0.0),
+                    ),
+                }),
+                parent_stop_id: s.parent_station,
+                route_ids: vec![], //TODO actually calculate these
+            })
+            .collect();
 
         Ok(Self {
             routes: final_routes,
@@ -216,60 +228,22 @@ impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleResponse {
 impl Schedule for ScheduleService {
     async fn get_schedule(
         &self,
-        request: Request<ScheduleRequest>,
+        _request: Request<ScheduleRequest>,
     ) -> Result<Response<ScheduleResponse>, Status> {
         unimplemented!()
     }
-    // async fn get_hello(
-    //         &self,
-    // request: request<hellorequest>,
-    //     ) -> result<response<helloresponse>, status> {
-    //         println!("received request: {:?}", request);
-    //
-    //         let hellorequest {
-    //             first_name,
-    //             last_name,
-    //         } = request.into_inner();
-    //
-    //         let response = helloresponse {
-    //             greeting: format!("hello, {} {}", first_name, last_name),
-    //         };
-    //
-    //         ok(response::new(response))
-    //     }
 }
-
-// #[tonic::async_trait]
-// impl test for tester {
-// async fn get_hello(
-//         &self,
-// request: request<hellorequest>,
-//     ) -> result<response<helloresponse>, status> {
-//         println!("received request: {:?}", request);
-//
-//         let hellorequest {
-//             first_name,
-//             last_name,
-//         } = request.into_inner();
-//
-//         let response = helloresponse {
-//             greeting: format!("hello, {} {}", first_name, last_name),
-//         };
-//
-//         ok(response::new(response))
-//     }
-// }
 
 /// Get the current MTA zip file, check it for differences using the optional hash, and process it
 async fn get_update(
     old_hash: Option<[u8; 32]>,
-) -> Result<Option<(gtfs_parsing::schedule::Schedule, [u8; 32])>, Box<dyn Error>> {
+) -> Result<Option<(ScheduleResponse, [u8; 32])>, String> {
     let resp: Vec<u8> = reqwest::get(SUPP_URL)
         .await
-        .expect("Can't download zip")
+        .map_err(|e| e.to_string())?
         .bytes()
         .await
-        .expect("Can't download zip")
+        .map_err(|e| e.to_string())?
         .into();
 
     let hash = blake3::hash(resp.as_slice());
@@ -278,21 +252,22 @@ async fn get_update(
         Ok(None)
     } else {
         // ZipArchive needs Read + Seek, I'm not sure how efficient this is
-        let mut archive = ZipArchive::new(Cursor::new(resp)).expect("Unable to parse zip");
-        archive
-            .extract("./gtfs_data/")
-            .expect("Unable to extract zip");
+        let mut archive = ZipArchive::new(Cursor::new(resp)).map_err(|e| e.to_string())?;
+        archive.extract("./gtfs_data/").map_err(|e| e.to_string())?;
 
         let schedule = gtfs_parsing::schedule::Schedule::from_dir("./gtfs_data/", false);
+        let schedule: ScheduleResponse = schedule.try_into()?;
 
         Ok(Some((schedule, hash.as_bytes().clone())))
     }
 }
 
-async fn update_loop(tx: Sender<ScheduleResponse>) -> Result<(), Box<dyn Error>> {
+async fn update_loop(tx: Sender<ScheduleResponse>) -> Result<(), String> {
     let (mut curr_schedule, mut curr_hash) = get_update(None)
         .await?
         .expect("Unable to get initial schedule");
+
+    tx.send(curr_schedule).await.map_err(|e| e.to_string())?;
 
     loop {
         match get_update(Some(curr_hash)).await? {
@@ -300,7 +275,9 @@ async fn update_loop(tx: Sender<ScheduleResponse>) -> Result<(), Box<dyn Error>>
                 println!("Found new update at {}", Utc::now());
                 curr_schedule = new_schedule;
                 curr_hash = new_hash;
-                // tx.send()
+                tx.send(curr_schedule).await.map_err(|e| e.to_string())?;
+
+                tokio::time::sleep(Duration::new(300, 0)).await;
             }
             None => println!("No new update at {}", Utc::now()),
         }
@@ -310,30 +287,63 @@ async fn update_loop(tx: Sender<ScheduleResponse>) -> Result<(), Box<dyn Error>>
 }
 
 async fn server_loop(mut rx: Receiver<ScheduleResponse>) -> Result<(), Box<dyn Error>> {
+    // Try to get initial schedule
+    let mut curr_schedule = match rx.recv().await {
+        Some(cs) => cs,
+        None => return Err("Unable to get the schedule in server thread")?,
+    };
+
+    println!("Server thread recieved new schedule at {}", Local::now());
+
+    let addr = "[::1]:50051".parse()?;
+
+    let mut server_future = tokio::spawn(async move {
+        let service = ScheduleService::new(curr_schedule);
+
+        Server::builder()
+            .add_service(ScheduleServer::new(service))
+            .serve(addr)
+            .await
+            .expect("Unable to start server");
+    });
+
+    loop {
+        // Check for updated schedule
+        curr_schedule = match rx.recv().await {
+            Some(cs) => cs,
+            None => return Err("Unable to get the schedule in server thread")?,
+        };
+
+        println!("Server thread recieved new schedule at {}", Local::now());
+
+        let addr = "[::1]:50051".parse()?;
+
+        server_future.abort();
+        server_future = tokio::spawn(async move {
+            let service = ScheduleService::new(curr_schedule);
+
+            Server::builder()
+                .add_service(ScheduleServer::new(service))
+                .serve(addr)
+                .await
+                .expect("Unable to start server");
+        });
+    }
+
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // let addr = "[::1]:50051".parse()?;
-    let service = ScheduleService::default();
+    loop {
+        let (tx, rx) = mpsc::channel(1);
 
-    // Server::builder()
-    //     .add_service(TestServer::new(greeter))
-    //     .serve(addr)
-    //     .await?;
+        let server = tokio::spawn(async move { server_loop(rx).await.unwrap() });
+        let updater = tokio::spawn(async move { update_loop(tx).await.unwrap() });
 
-    // get_update().await?;
+        let _ = server.await;
+        let _ = updater.await;
+    }
 
-    let (mut curr_schedule, mut curr_hash) = get_update(None)
-        .await?
-        .expect("Unable to get initial schedule");
-
-    println!("Fetching initial schedule at {}", Utc::now());
-
-    // let (tx, rx) = mpsc::channel(1);
-
-    // tokio::task::spawn(async move { update_loop().await.unwrap() }).await?;
-
-    Ok(())
+    unreachable!()
 }
