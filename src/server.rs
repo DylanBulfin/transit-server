@@ -1,5 +1,6 @@
 use std::{io::Cursor, time::Duration};
 
+use blake3::Hash;
 use chrono::{DateTime, Days, Timelike};
 use chrono::{Local, Utc};
 use chrono_tz::{America::New_York, Tz};
@@ -17,7 +18,6 @@ use transit_server::{
 };
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
-const UPDATE_MINUTE: u32 = 35;
 
 fn get_nyc_datetime() -> DateTime<Tz> {
     let curr_time = Utc::now();
@@ -25,30 +25,37 @@ fn get_nyc_datetime() -> DateTime<Tz> {
 }
 
 fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
-    if dt.minute() >= UPDATE_MINUTE {
+    const INTERVAL_M: u32 = 5;
+    const LAST_VALID: u32 = (60 / INTERVAL_M) - 1;
+
+    let interval = dt.minute() / INTERVAL_M;
+
+    if interval == LAST_VALID {
         if dt.hour() == 23 {
-            // Next update will wrap
+            // Next update will wrap to next day, set time to midnight
             dt.checked_add_days(Days::new(1))
                 .unwrap_or_else(|| panic!("Unable to add day to date: {}", dt))
                 .with_hour(0)
                 .unwrap()
-                .with_minute(UPDATE_MINUTE)
+                .with_minute(0)
+                .unwrap()
+                .with_second(0)
                 .unwrap()
         } else {
-            dt.with_hour(dt.hour() + 1)
-                .unwrap()
-                .with_minute(UPDATE_MINUTE)
-                .unwrap()
+            dt.with_hour(dt.hour() + 1).unwrap().with_minute(0).unwrap()
         }
     } else {
-        dt.with_minute(UPDATE_MINUTE).unwrap() // should be infallible
+        dt.with_minute((interval + 1) * INTERVAL_M)
+            .unwrap()
+            .with_second(0)
+            .unwrap()
     }
 }
 
 /// Get the current MTA zip file, check it for differences using the optional hash, and process it
 async fn get_update(
-    old_hash: Option<[u8; 32]>,
-) -> Result<Option<(ScheduleResponse, [u8; 32])>, ScheduleError> {
+    old_hash: Option<Hash>,
+) -> Result<Option<(ScheduleResponse, Hash)>, ScheduleError> {
     let resp: Vec<u8> = reqwest::get(SUPP_URL).await?.bytes().await?.into();
 
     let hash = blake3::hash(resp.as_slice());
@@ -63,7 +70,7 @@ async fn get_update(
         let schedule = gtfs_parsing::schedule::Schedule::from_dir("./gtfs_data/", false);
         let schedule: ScheduleResponse = schedule.try_into()?;
 
-        Ok(Some((schedule, hash.as_bytes().clone())))
+        Ok(Some((schedule, hash.clone())))
     }
 }
 
@@ -100,6 +107,8 @@ async fn update_loop() -> Result<(), ScheduleError> {
 
             next_update = get_next_update(get_nyc_datetime());
         }
+
+        sleep(Duration::new(10, 0)).await;
     }
 }
 
@@ -131,18 +140,21 @@ async fn server_loop() -> Result<(), ScheduleError> {
 #[tokio::main]
 async fn main() -> Result<(), ScheduleError> {
     loop {
-        let server = tokio::spawn(async move { server_loop().await.unwrap() });
-        let updater = tokio::spawn(async move { update_loop().await.unwrap() });
+        let server = tokio::spawn(async move { server_loop().await.unwrap_or_default() });
+        let updater = tokio::spawn(async move { update_loop().await.unwrap_or_default() });
 
+        // Check that both are still running
         while !server.is_finished() && !updater.is_finished() {
             sleep(Duration::new(5, 0)).await;
         }
 
+        // If either crashes we just restart from scratch, abort them
         server.abort();
         updater.abort();
 
+        // Wait for them to actually shutdown to restart
         while !server.is_finished() || !updater.is_finished() {
-            sleep(Duration::new(0, 1_000_000)).await;
+            sleep(Duration::new(1, 0)).await;
         }
     }
 }
