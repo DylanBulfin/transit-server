@@ -4,6 +4,7 @@ use blake3::Hash;
 use chrono::{DateTime, Days, Timelike};
 use chrono::{Local, Utc};
 use chrono_tz::{America::New_York, Tz};
+use gtfs_parsing::schedule::Schedule;
 use tokio::time::sleep;
 use tonic::{codec::CompressionEncoding, transport::Server};
 use transit_server::shared::{self, UPDATE_LOCK};
@@ -18,11 +19,6 @@ use transit_server::{
 };
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
-
-fn get_nyc_datetime() -> DateTime<Tz> {
-    let curr_time = Utc::now();
-    curr_time.with_timezone(&New_York)
-}
 
 fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
     const INTERVAL_M: u32 = 5;
@@ -56,22 +52,12 @@ fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
 async fn get_update(
     old_hash: Option<Hash>,
 ) -> Result<Option<(ScheduleResponse, Hash)>, ScheduleError> {
+    return unimplemented!();
+
     let resp: Vec<u8> = reqwest::get(SUPP_URL).await?.bytes().await?.into();
 
     let hash = blake3::hash(resp.as_slice());
-
-    if old_hash.is_some() && hash == old_hash.unwrap() {
-        Ok(None)
-    } else {
-        // ZipArchive needs Read + Seek, I'm not sure how efficient this is
-        let mut archive = ZipArchive::new(Cursor::new(resp))?;
-        archive.extract("./gtfs_data/")?;
-
-        let schedule = gtfs_parsing::schedule::Schedule::from_dir("./gtfs_data/", false);
-        let schedule: ScheduleResponse = schedule.try_into()?;
-
-        Ok(Some((schedule, hash.clone())))
-    }
+    unimplemented!();
 }
 
 async fn update_loop() -> Result<(), ScheduleError> {
@@ -91,10 +77,10 @@ async fn update_loop() -> Result<(), ScheduleError> {
 
     // Calculate the next update time, from testing it seems like updates happen around the HH:30
     // mark
-    let mut next_update = get_next_update(get_nyc_datetime());
+    let mut next_update = get_next_update(shared::get_nyc_datetime());
 
     loop {
-        if get_nyc_datetime() >= next_update {
+        if shared::get_nyc_datetime() >= next_update {
             match get_update(Some(curr_hash)).await? {
                 Some((new_schedule, new_hash)) => {
                     println!("Found new update at {}", Utc::now());
@@ -105,7 +91,7 @@ async fn update_loop() -> Result<(), ScheduleError> {
                 None => println!("No new update at {}", Utc::now()),
             }
 
-            next_update = get_next_update(get_nyc_datetime());
+            next_update = get_next_update(shared::get_nyc_datetime());
         }
 
         sleep(Duration::new(10, 0)).await;

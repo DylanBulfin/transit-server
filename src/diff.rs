@@ -1,19 +1,15 @@
-// Only care about diffing these collections:
-// Route::trips
-// Route::shapes
-// Route::stops
-// Trip::stop_times
-//
-// So, we only need to create diff methods for Route and Trip
-//
-// All other collections and entities are small enought that it shouldn't matter as much
-//
-// The routes collection should rarely change and since my application only supports certain
-// routes anyway it probably won't matter.
-
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 
-use crate::shared::db_transit::{Shape, Stop, StopTime};
+use chrono::{Datelike, NaiveDate, Weekday};
+use gtfs_parsing::schedule::{calendar::ExceptionType, trips::DirectionType};
+
+use crate::{
+    error::ScheduleError,
+    shared::{
+        db_transit::{Position, Shape, Stop, StopTime, Transfer},
+        get_nyc_datetime,
+    },
+};
 
 // Create intermediate representations that use HashMap instead of Vec
 #[derive(Debug, Clone)]
@@ -21,6 +17,204 @@ pub struct ScheduleIR {
     pub routes: HashMap<String, RouteIR>,
     pub shapes: HashMap<String, Shape>,
     pub stops: HashMap<String, Stop>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RouteIR {
+    pub route_id: String,
+
+    pub trips: HashMap<String, TripIR>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TripIR {
+    pub trip_id: String,
+    pub stop_times: HashMap<u32, StopTime>, // Keyed by stop sequence for convenience
+
+    pub headsign: Option<String>,
+    pub shape_id: Option<String>,
+    pub direction: Option<u32>,
+}
+
+// StopTime only implements PartialEq but Eq is just a marker trait so we don't need to do anything
+impl Eq for TripIR {}
+
+impl ScheduleIR {
+    fn try_from_schedule_with_date(
+        value: gtfs_parsing::schedule::Schedule,
+        date: NaiveDate,
+    ) -> Result<Self, ScheduleError> {
+        let gtfs_parsing::schedule::Schedule {
+            trips: s_trips,
+            routes: s_routes,
+            services: s_services,
+            service_exceptions: s_service_exceptions,
+            shapes: s_shapes,
+            stops: s_stops,
+            stop_times: mut s_stop_times,
+            transfers: mut s_transfers,
+            agencies: _, // Slightly more explicit than ..
+        } = value;
+
+        let mut routes = HashMap::new();
+        for route_id in s_routes.into_keys() {
+            routes.insert(
+                route_id.clone(),
+                RouteIR {
+                    route_id,
+                    trips: HashMap::default(),
+                },
+            );
+        }
+
+        let today = date;
+        let today_str = format!("{:04}{:02}{:02}", today.year(), today.month(), today.day());
+        let today_dow = today.weekday();
+
+        for (
+            trip_id,
+            gtfs_parsing::schedule::trips::Trip {
+                shape_id,
+                trip_headsign: headsign,
+                direction_id,
+                ref route_id,
+                ref service_id,
+                ..
+            },
+        ) in s_trips
+        {
+            let mut active = true;
+            let mut found_service = false;
+            if let Some(service) = s_services.get(service_id) {
+                active = active
+                    && match today_dow {
+                        Weekday::Mon => service.monday.into(),
+                        Weekday::Tue => service.tuesday.into(),
+                        Weekday::Wed => service.wednesday.into(),
+                        Weekday::Thu => service.thursday.into(),
+                        Weekday::Fri => service.friday.into(),
+                        Weekday::Sat => service.saturday.into(),
+                        Weekday::Sun => service.sunday.into(),
+                    }
+                    && service.start_date <= today_str
+                    && service.end_date >= today_str;
+                found_service = true;
+            }
+            if let Some(service_exceptions) = s_service_exceptions.get(service_id) {
+                if let Some(service_exception) = service_exceptions.get(&today_str) {
+                    active = active && service_exception.exception_type == ExceptionType::Added;
+                }
+                found_service = true;
+            }
+
+            if !active || !found_service {
+                continue;
+            }
+
+            let stop_times = s_stop_times
+                .remove(&trip_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect();
+
+            let trip = TripIR {
+                trip_id: trip_id.clone(),
+                shape_id,
+                headsign,
+                direction: direction_id.map(|s| if s == DirectionType::Uptown { 0 } else { 1 }),
+                stop_times,
+            };
+
+            routes
+                .get_mut(route_id)
+                .ok_or(format!("Invalid route_id: {}", route_id))?
+                .trips
+                .insert(trip_id, trip);
+        }
+
+        let shapes: HashMap<String, Shape> = s_shapes
+            .into_iter()
+            .map(|(k, shape)| {
+                let gtfs_parsing::schedule::shapes::Shape { shape_id, points } = shape;
+                (
+                    k,
+                    Shape {
+                        shape_id: Some(shape_id),
+                        points: points
+                            .into_iter()
+                            .map(|p| Position {
+                                lat: Some(p.shape_pt_lat),
+                                lon: Some(p.shape_pt_lon),
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+
+        let stops: HashMap<String, Stop> = s_stops
+            .into_iter()
+            .map(|(k, stop)| {
+                let gtfs_parsing::schedule::stops::Stop {
+                    stop_id,
+                    stop_lat,
+                    stop_lon,
+                    stop_name,
+                    parent_station,
+                    ..
+                } = stop;
+
+                let transfers_from = s_transfers
+                    .remove(&stop_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|t| Transfer {
+                        from_stop_id: t.from_stop_id,
+                        to_stop_id: t.to_stop_id,
+                        min_transfer_time: t.min_transfer_time,
+                    })
+                    .collect();
+
+                (
+                    k,
+                    Stop {
+                        stop_id: Some(stop_id),
+                        stop_name,
+                        parent_stop_id: parent_station,
+                        transfers_from,
+                        route_ids: Vec::new(), // TODO calculate this
+                        position: if let (Some(lat), Some(lon)) = (stop_lat, stop_lon) {
+                            if let (Ok(lat), Ok(lon)) = (lat.parse(), lon.parse()) {
+                                Some(Position {
+                                    lat: Some(lat),
+                                    lon: Some(lon),
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        },
+                    },
+                )
+            })
+            .collect();
+
+        Ok(Self {
+            routes,
+            stops,
+            shapes,
+        })
+    }
+}
+
+impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleIR {
+    type Error = ScheduleError;
+
+    fn try_from(value: gtfs_parsing::schedule::Schedule) -> Result<Self, Self::Error> {
+        Self::try_from_schedule_with_date(value, get_nyc_datetime().date_naive())
+    }
 }
 
 impl ScheduleIR {
@@ -175,26 +369,6 @@ impl ScheduleIR {
 }
 
 #[derive(Debug, Clone)]
-pub struct RouteIR {
-    pub route_id: String,
-
-    pub trips: HashMap<String, TripIR>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TripIR {
-    pub trip_id: String,
-    pub stop_times: HashMap<u32, StopTime>, // Keyed by stop sequence for convenience
-
-    pub headsign: Option<String>,
-    pub shape_id: Option<String>,
-    pub direction: Option<u32>,
-}
-
-// StopTime only implements PartialEq but Eq is just a marker trait so we don't need to do anything
-impl Eq for TripIR {}
-
-#[derive(Debug, Clone)]
 pub struct ScheduleUpdate {
     pub route_diffs: Vec<RouteTripsDiff>,
 
@@ -203,6 +377,24 @@ pub struct ScheduleUpdate {
 
     pub added_stops: HashMap<String, Stop>,
     pub removed_stop_ids: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RouteTripsDiff {
+    pub route_id: String,
+
+    pub added_trips: HashMap<String, TripIR>,
+    pub removed_trip_ids: HashSet<String>,
+
+    pub trip_diffs: Vec<TripStopTimesDiff>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TripStopTimesDiff {
+    pub trip_id: String,
+
+    pub added_stop_times: HashMap<u32, StopTime>,
+    pub removed_stop_time_seq: HashSet<u32>, // Use stop_sequence for key
 }
 
 impl ScheduleUpdate {
@@ -261,20 +453,22 @@ impl ScheduleUpdate {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct RouteTripsDiff {
-    pub route_id: String,
-
-    pub added_trips: HashMap<String, TripIR>,
-    pub removed_trip_ids: HashSet<String>,
-
-    pub trip_diffs: Vec<TripStopTimesDiff>,
+impl From<gtfs_parsing::schedule::stop_times::StopTime> for StopTime {
+    fn from(value: gtfs_parsing::schedule::stop_times::StopTime) -> Self {
+        let gtfs_parsing::schedule::stop_times::StopTime {
+            stop_id,
+            arrival_time,
+            departure_time,
+            stop_sequence,
+            ..
+        } = value;
+        Self {
+            stop_id,
+            arrival_time,
+            departure_time,
+            stop_sequence: Some(stop_sequence),
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct TripStopTimesDiff {
-    pub trip_id: String,
-
-    pub added_stop_times: HashMap<u32, StopTime>,
-    pub removed_stop_time_seq: HashSet<u32>, // Use stop_sequence for key
-}
+#[cfg(test)]
