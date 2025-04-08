@@ -70,6 +70,9 @@ impl ScheduleIR {
         let today = date;
         let today_str = format!("{:04}{:02}{:02}", today.year(), today.month(), today.day());
         let today_dow = today.weekday();
+        let mut service_count = 0;
+        let mut service_exc_count = 0;
+        let trip_len = s_trips.len();
 
         for (
             trip_id,
@@ -83,31 +86,26 @@ impl ScheduleIR {
             },
         ) in s_trips
         {
-            let mut active = true;
-            let mut found_service = false;
+            let mut active = false;
             if let Some(service) = s_services.get(service_id) {
-                active = active
-                    && match today_dow {
-                        Weekday::Mon => service.monday.into(),
-                        Weekday::Tue => service.tuesday.into(),
-                        Weekday::Wed => service.wednesday.into(),
-                        Weekday::Thu => service.thursday.into(),
-                        Weekday::Fri => service.friday.into(),
-                        Weekday::Sat => service.saturday.into(),
-                        Weekday::Sun => service.sunday.into(),
-                    }
-                    && service.start_date <= today_str
+                active = match today_dow {
+                    Weekday::Mon => service.monday.into(),
+                    Weekday::Tue => service.tuesday.into(),
+                    Weekday::Wed => service.wednesday.into(),
+                    Weekday::Thu => service.thursday.into(),
+                    Weekday::Fri => service.friday.into(),
+                    Weekday::Sat => service.saturday.into(),
+                    Weekday::Sun => service.sunday.into(),
+                } && service.start_date <= today_str
                     && service.end_date >= today_str;
-                found_service = true;
             }
             if let Some(service_exceptions) = s_service_exceptions.get(service_id) {
                 if let Some(service_exception) = service_exceptions.get(&today_str) {
-                    active = active && service_exception.exception_type == ExceptionType::Added;
+                    active = service_exception.exception_type == ExceptionType::Added;
                 }
-                found_service = true;
             }
 
-            if !active || !found_service {
+            if !active {
                 continue;
             }
 
@@ -132,6 +130,8 @@ impl ScheduleIR {
                 .trips
                 .insert(trip_id, trip);
         }
+        //
+        // panic!("{} {} {}", trip_len, service_count, service_exc_count);
 
         let shapes: HashMap<String, Shape> = s_shapes
             .into_iter()
@@ -472,3 +472,148 @@ impl From<gtfs_parsing::schedule::stop_times::StopTime> for StopTime {
 }
 
 #[cfg(test)]
+mod tests {
+    use chrono::NaiveDate;
+
+    use super::ScheduleIR;
+
+    macro_rules! setup_new_schedule {
+        ($bounds:expr) => {{
+            let agency_reader = std::fs::File::open("./gtfs_data/schedule/agency.txt").unwrap();
+            let stop_reader = std::fs::File::open("./gtfs_data/schedule/stops.txt").unwrap();
+            let stop_time_reader =
+                std::fs::File::open("./gtfs_data/schedule/stop_times.txt").unwrap();
+            let service_reader = std::fs::File::open("./gtfs_data/schedule/calendar.txt").unwrap();
+            let service_exception_reader =
+                std::fs::File::open("./gtfs_data/schedule/calendar_dates.txt").unwrap();
+            let shape_reader = std::fs::File::open("./gtfs_data/schedule/shapes.txt").unwrap();
+            let transfer_reader =
+                std::fs::File::open("./gtfs_data/schedule/transfers.txt").unwrap();
+            let route_reader = std::fs::File::open("./gtfs_data/schedule/routes.txt").unwrap();
+            let trip_reader = std::fs::File::open("./gtfs_data/schedule/trips.txt").unwrap();
+
+            gtfs_parsing::schedule::Schedule::from_readers(
+                agency_reader,
+                stop_reader,
+                stop_time_reader,
+                service_reader,
+                service_exception_reader,
+                shape_reader,
+                transfer_reader,
+                route_reader,
+                trip_reader,
+                $bounds,
+            )
+        }};
+    }
+
+    #[test]
+    fn test_schedule_ir() {
+        let schedule = setup_new_schedule!(None).unwrap();
+        let schedule_abbrev =
+            setup_new_schedule!(Some((&"20250217".to_owned(), &"20250217".to_owned()))).unwrap();
+
+        assert!(schedule.trips.len() != 0 && schedule_abbrev.trips.len() != 0);
+        // panic!("{:?}", schedule_abbrev.service_exceptions);
+        // let active_services_ids: HashSet<String> = schedule_abbrev
+        //     .trips
+        //     .values()
+        //     .map(|t| t.service_id.clone())
+        //     .collect();
+        // let active_service_ids2: HashSet<String> = schedule_abbrev
+        //     .services
+        //     .keys()
+        //     .chain(schedule_abbrev.service_exceptions.keys())
+        //     .map(String::clone)
+        //     .collect();
+        // let mut av: Vec<String> = active_services_ids.into_iter().collect();
+        // let mut av2: Vec<String> = active_service_ids2.into_iter().collect();
+        //
+        // av.sort();
+        // av2.sort();
+        //
+        // panic!("1: {:?}\n2: {:?}", av, av2);
+
+        let schedule_ir_abbrev = ScheduleIR::try_from_schedule_with_date(
+            schedule_abbrev,
+            NaiveDate::from_ymd_opt(2025, 2, 17).unwrap(),
+        )
+        .unwrap();
+        let schedule_ir = ScheduleIR::try_from_schedule_with_date(
+            schedule,
+            NaiveDate::from_ymd_opt(2025, 2, 17).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(schedule_ir.routes.len(), schedule_ir_abbrev.routes.len());
+        assert_eq!(
+            schedule_ir
+                .routes
+                .values()
+                .map(|r| r.trips.len())
+                .sum::<usize>(),
+            schedule_ir_abbrev
+                .routes
+                .values()
+                .map(|r| r.trips.len())
+                .sum::<usize>()
+        );
+        assert_eq!(
+            schedule_ir
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .map(|t| t.stop_times.len())
+                .sum::<usize>(),
+            schedule_ir_abbrev
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .map(|t| t.stop_times.len())
+                .sum::<usize>(),
+        );
+        assert_eq!(schedule_ir.stops.len(), schedule_ir_abbrev.stops.len());
+        assert_eq!(
+            schedule_ir
+                .stops
+                .values()
+                .flat_map(|s| s.transfers_from.iter())
+                .count(),
+            schedule_ir_abbrev
+                .stops
+                .values()
+                .flat_map(|s| s.transfers_from.iter())
+                .count(),
+        );
+        assert_eq!(schedule_ir.shapes.len(), schedule_ir_abbrev.shapes.len());
+
+        assert_eq!(schedule_ir.routes.len(), 30);
+        assert_eq!(
+            schedule_ir
+                .routes
+                .values()
+                .flat_map(|r| r.trips.iter())
+                .count(),
+            6190
+        );
+        assert_eq!(
+            schedule_ir
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .map(|t| t.stop_times.len())
+                .sum::<usize>(),
+            169423
+        );
+        assert_eq!(schedule_ir.shapes.len(), 311);
+        assert_eq!(schedule_ir.stops.len(), 1497);
+        assert_eq!(
+            schedule_ir
+                .stops
+                .values()
+                .flat_map(|s| s.transfers_from.iter())
+                .count(),
+            616
+        );
+    }
+}
