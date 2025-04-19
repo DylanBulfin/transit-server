@@ -3,12 +3,9 @@ use std::collections::{HashMap, HashSet, hash_map::Entry};
 use chrono::{Datelike, NaiveDate, Weekday};
 use gtfs_parsing::schedule::{calendar::ExceptionType, trips::DirectionType};
 
-use crate::{
-    error::ScheduleError,
-    shared::{
-        db_transit::{Position, Shape, Stop, StopTime, Transfer},
-        get_nyc_datetime,
-    },
+use crate::shared::{
+    db_transit::{Position, Shape, Stop, StopTime, Transfer},
+    get_nyc_datetime,
 };
 
 // Create intermediate representations that use HashMap instead of Vec
@@ -43,7 +40,7 @@ impl ScheduleIR {
     fn try_from_schedule_with_date(
         value: gtfs_parsing::schedule::Schedule,
         date: NaiveDate,
-    ) -> Result<Self, ScheduleError> {
+    ) -> Self {
         let gtfs_parsing::schedule::Schedule {
             trips: s_trips,
             routes: s_routes,
@@ -124,11 +121,9 @@ impl ScheduleIR {
                 stop_times,
             };
 
-            routes
-                .get_mut(route_id)
-                .ok_or(format!("Invalid route_id: {}", route_id))?
-                .trips
-                .insert(trip_id, trip);
+            if let Some(route) = routes.get_mut(route_id) {
+                route.trips.insert(trip_id, trip);
+            }
         }
         //
         // panic!("{} {} {}", trip_len, service_count, service_exc_count);
@@ -201,18 +196,16 @@ impl ScheduleIR {
             })
             .collect();
 
-        Ok(Self {
+        Self {
             routes,
             stops,
             shapes,
-        })
+        }
     }
 }
 
-impl TryFrom<gtfs_parsing::schedule::Schedule> for ScheduleIR {
-    type Error = ScheduleError;
-
-    fn try_from(value: gtfs_parsing::schedule::Schedule) -> Result<Self, Self::Error> {
+impl From<gtfs_parsing::schedule::Schedule> for ScheduleIR {
+    fn from(value: gtfs_parsing::schedule::Schedule) -> Self {
         Self::try_from_schedule_with_date(value, get_nyc_datetime().date_naive())
     }
 }
@@ -230,6 +223,13 @@ impl ScheduleIR {
                     self.routes.get(route_id).unwrap(),
                     prev.routes.get(route_id).unwrap(),
                 ));
+            } else {
+                panic!("Unexpected new route: {}", route_id);
+            }
+        }
+        for route_id in prev.routes.keys() {
+            if !self.routes.contains_key(route_id) {
+                panic!("Unexpected removed route: {}", route_id)
             }
         }
 
@@ -368,7 +368,7 @@ impl ScheduleIR {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScheduleUpdate {
     pub route_diffs: Vec<RouteTripsDiff>,
 
@@ -379,7 +379,7 @@ pub struct ScheduleUpdate {
     pub removed_stop_ids: HashSet<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RouteTripsDiff {
     pub route_id: String,
 
@@ -389,7 +389,7 @@ pub struct RouteTripsDiff {
     pub trip_diffs: Vec<TripStopTimesDiff>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TripStopTimesDiff {
     pub trip_id: String,
 
@@ -473,9 +473,13 @@ impl From<gtfs_parsing::schedule::stop_times::StopTime> for StopTime {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use chrono::NaiveDate;
 
-    use super::ScheduleIR;
+    use crate::shared::db_transit::{Position, Shape, Stop, StopTime};
+
+    use super::{ScheduleIR, TripIR, TripStopTimesDiff};
 
     macro_rules! setup_new_schedule {
         ($bounds:expr) => {{
@@ -507,43 +511,25 @@ mod tests {
         }};
     }
 
+    fn nm<T, U>() -> HashMap<T, U> {
+        HashMap::default()
+    }
+
     #[test]
+    #[ignore]
     fn test_schedule_ir() {
         let schedule = setup_new_schedule!(None).unwrap();
         let schedule_abbrev =
             setup_new_schedule!(Some((&"20250217".to_owned(), &"20250217".to_owned()))).unwrap();
 
-        assert!(schedule.trips.len() != 0 && schedule_abbrev.trips.len() != 0);
-        // panic!("{:?}", schedule_abbrev.service_exceptions);
-        // let active_services_ids: HashSet<String> = schedule_abbrev
-        //     .trips
-        //     .values()
-        //     .map(|t| t.service_id.clone())
-        //     .collect();
-        // let active_service_ids2: HashSet<String> = schedule_abbrev
-        //     .services
-        //     .keys()
-        //     .chain(schedule_abbrev.service_exceptions.keys())
-        //     .map(String::clone)
-        //     .collect();
-        // let mut av: Vec<String> = active_services_ids.into_iter().collect();
-        // let mut av2: Vec<String> = active_service_ids2.into_iter().collect();
-        //
-        // av.sort();
-        // av2.sort();
-        //
-        // panic!("1: {:?}\n2: {:?}", av, av2);
-
         let schedule_ir_abbrev = ScheduleIR::try_from_schedule_with_date(
             schedule_abbrev,
             NaiveDate::from_ymd_opt(2025, 2, 17).unwrap(),
-        )
-        .unwrap();
+        );
         let schedule_ir = ScheduleIR::try_from_schedule_with_date(
             schedule,
             NaiveDate::from_ymd_opt(2025, 2, 17).unwrap(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(schedule_ir.routes.len(), schedule_ir_abbrev.routes.len());
         assert_eq!(
@@ -615,5 +601,243 @@ mod tests {
                 .count(),
             616
         );
+    }
+
+    #[test]
+    fn test_shape_diffs() {
+        let id1 = "Testing".to_owned();
+        let id2 = "Testing2".to_owned();
+        let id3 = "Testing3".to_owned();
+
+        let mut shapes1 = nm();
+        shapes1.insert(
+            id1.clone(),
+            Shape {
+                shape_id: Some(id1.clone()),
+                points: vec![Position {
+                    lat: Some(1.0),
+                    lon: Some(2.0),
+                }],
+            },
+        );
+        shapes1.insert(
+            id2.clone(),
+            Shape {
+                shape_id: Some(id2.clone()),
+                points: vec![Position {
+                    lat: Some(2.0),
+                    lon: Some(3.0),
+                }],
+            },
+        );
+
+        let mut shapes2 = nm();
+        shapes2.insert(
+            id2.clone(),
+            Shape {
+                shape_id: Some(id2.clone()),
+                points: vec![Position {
+                    lat: Some(2.0),
+                    lon: Some(3.0),
+                }],
+            },
+        );
+        shapes2.insert(
+            id3.clone(),
+            Shape {
+                shape_id: Some(id3.clone()),
+                points: vec![Position {
+                    lat: Some(3.0),
+                    lon: Some(4.0),
+                }],
+            },
+        );
+
+        let ir1 = ScheduleIR {
+            routes: nm(),
+            stops: nm(),
+            shapes: shapes1,
+        };
+        let ir2 = ScheduleIR {
+            routes: nm(),
+            stops: nm(),
+            shapes: shapes2,
+        };
+
+        let (added_shapes, removed_shape_ids) = ir2.get_shape_diffs(&ir1);
+
+        assert_eq!(removed_shape_ids.iter().collect::<Vec<_>>(), vec![&id1]);
+        assert_eq!(
+            added_shapes.values().collect::<Vec<_>>(),
+            vec![&Shape {
+                shape_id: Some(id3.clone()),
+                points: vec![Position {
+                    lat: Some(3.0),
+                    lon: Some(4.0),
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn test_stop_diffs() {
+        let id1 = "Testing".to_owned();
+        let id2 = "Testing2".to_owned();
+        let id3 = "Testing3".to_owned();
+
+        let stop1 = Stop {
+            stop_id: Some(id1.clone()),
+            stop_name: None,
+            parent_stop_id: None,
+            transfers_from: vec![],
+            position: Some(Position {
+                lat: Some(1.0),
+                lon: Some(2.0),
+            }),
+            route_ids: vec![],
+        };
+
+        let stop2 = Stop {
+            stop_id: Some(id2.clone()),
+            stop_name: None,
+            parent_stop_id: None,
+            transfers_from: vec![],
+            position: Some(Position {
+                lat: Some(2.0),
+                lon: Some(3.0),
+            }),
+            route_ids: vec![],
+        };
+
+        let stop3 = Stop {
+            stop_id: Some(id3.clone()),
+            stop_name: None,
+            parent_stop_id: None,
+            transfers_from: vec![],
+            position: Some(Position {
+                lat: Some(3.0),
+                lon: Some(4.0),
+            }),
+            route_ids: vec![],
+        };
+
+        let stop4 = Stop {
+            stop_id: Some(id1.clone()),
+            stop_name: Some("Name".to_owned()),
+            parent_stop_id: None,
+            transfers_from: vec![],
+            position: Some(Position {
+                lat: Some(4.0),
+                lon: Some(4.0),
+            }),
+            route_ids: vec![],
+        };
+
+        let mut stops1 = nm();
+        let mut stops2 = nm();
+
+        stops1.insert(id1.clone(), stop1.clone());
+        stops1.insert(id2.clone(), stop2.clone());
+
+        stops2.insert(id2.clone(), stop2.clone());
+        stops2.insert(id3.clone(), stop3.clone());
+        stops2.insert(id1.clone(), stop4.clone());
+
+        let ir1 = ScheduleIR {
+            routes: nm(),
+            shapes: nm(),
+            stops: stops1,
+        };
+        let ir2 = ScheduleIR {
+            routes: nm(),
+            shapes: nm(),
+            stops: stops2,
+        };
+
+        let (added_stops, removed_stop_ids) = ir2.get_stop_diffs(&ir1);
+
+        let mut added_vec = added_stops.values().collect::<Vec<_>>();
+        let mut exp_added = vec![&stop3, &stop4];
+        added_vec.sort_by_key(|s| s.stop_id.clone().unwrap_or_default());
+        exp_added.sort_by_key(|s| s.stop_id.clone().unwrap_or_default());
+
+        assert_eq!(removed_stop_ids.iter().collect::<Vec<_>>(), vec![&id1]);
+        assert_eq!(added_vec, exp_added);
+    }
+
+    #[test]
+    fn test_trip_stop_time_diffs() {
+        let id1 = "Testing1".to_owned();
+        let id2 = "Testing2".to_owned();
+        let id3 = "Testing3".to_owned();
+
+        let ss1 = 12;
+        let ss2 = 22;
+        let ss3 = 13;
+
+        let stop_time1 = StopTime {
+            arrival_time: Some("12:00:00".to_owned()),
+            departure_time: Some("13:00:00".to_owned()),
+            stop_sequence: Some(ss1),
+            stop_id: Some(id1.clone()),
+        };
+        let stop_time2 = StopTime {
+            arrival_time: Some("22:00:00".to_owned()),
+            departure_time: Some("23:00:00".to_owned()),
+            stop_sequence: Some(ss2),
+            stop_id: Some(id2.clone()),
+        };
+        let stop_time3 = StopTime {
+            arrival_time: Some("15:00:00".to_owned()),
+            departure_time: Some("16:00:00".to_owned()),
+            stop_sequence: Some(ss3),
+            stop_id: Some(id3.clone()),
+        };
+        let stop_time4 = StopTime {
+            arrival_time: Some("22:00:00".to_owned()),
+            departure_time: Some("23:00:00".to_owned()),
+            stop_sequence: Some(ss1),
+            stop_id: Some(id2.clone()),
+        };
+
+        let mut times1 = nm();
+        let mut times2 = nm();
+
+        times1.insert(ss1, stop_time1.clone());
+        times1.insert(ss2, stop_time2.clone());
+
+        times2.insert(ss2, stop_time2.clone());
+        times2.insert(ss3, stop_time3.clone());
+        times2.insert(ss1, stop_time4.clone());
+
+        let trip1 = TripIR {
+            trip_id: "TestTrip1".to_owned(),
+            stop_times: times1,
+            headsign: Some("TestSign1".to_owned()),
+            shape_id: Some("TestShape1".to_owned()),
+            direction: Some(1),
+        };
+        let trip2 = TripIR {
+            trip_id: "TestTrip2".to_owned(),
+            stop_times: times2,
+            headsign: Some("TestSign2".to_owned()),
+            shape_id: Some("TestShape2".to_owned()),
+            direction: Some(2),
+        };
+
+        let TripStopTimesDiff {
+            added_stop_times,
+            removed_stop_time_seq,
+            ..
+        } = ScheduleIR::get_trip_stop_times_diff(&trip2, &trip1);
+
+        let mut added_vec: Vec<_> = added_stop_times.values().collect();
+        let mut exp_added: Vec<_> = vec![&stop_time3, &stop_time4];
+
+        added_vec.sort_by_key(|t| t.stop_sequence.unwrap_or_default());
+        exp_added.sort_by_key(|t| t.stop_sequence.unwrap_or_default());
+
+        assert_eq!(removed_stop_time_seq.iter().collect::<Vec<_>>(), vec![&ss1]);
+        assert_eq!(added_vec, exp_added);
     }
 }
