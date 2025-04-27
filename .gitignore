@@ -2,4 +2,6 @@
 .DS_Store
 */.DS_Store
 .session
-gtfs_data
+gtfs_data/schedule/*.txt
+gtfs_data/schedule_alt/*.txt
+

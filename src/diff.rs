@@ -4,24 +4,29 @@ use chrono::{Datelike, NaiveDate, Weekday};
 use gtfs_parsing::schedule::{calendar::ExceptionType, trips::DirectionType};
 
 use crate::shared::{
-    db_transit::{Position, Shape, Stop, StopTime, Transfer},
+    db_transit::{
+        FullSchedule, Position, Route, ScheduleDiff, ScheduleResponse, Shape, Stop, StopTime,
+        Transfer, Trip,
+    },
     get_nyc_datetime,
 };
 
 // Create intermediate representations that use HashMap instead of Vec
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScheduleIR {
     pub routes: HashMap<String, RouteIR>,
     pub shapes: HashMap<String, Shape>,
     pub stops: HashMap<String, Stop>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RouteIR {
     pub route_id: String,
 
     pub trips: HashMap<String, TripIR>,
 }
+
+impl From<>
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TripIR {
@@ -31,6 +36,26 @@ pub struct TripIR {
     pub headsign: Option<String>,
     pub shape_id: Option<String>,
     pub direction: Option<u32>,
+}
+
+impl From<TripIR> for Trip {
+    fn from(value: TripIR) -> Self {
+        let TripIR {
+            trip_id,
+            stop_times,
+            headsign,
+            shape_id,
+            direction,
+        } = value;
+
+        Self {
+            trip_id: Some(trip_id),
+            stop_times: stop_times.into_values().collect(),
+            headsign,
+            shape_id,
+            direction,
+        }
+    }
 }
 
 // StopTime only implements PartialEq but Eq is just a marker trait so we don't need to do anything
@@ -67,9 +92,6 @@ impl ScheduleIR {
         let today = date;
         let today_str = format!("{:04}{:02}{:02}", today.year(), today.month(), today.day());
         let today_dow = today.weekday();
-        let mut service_count = 0;
-        let mut service_exc_count = 0;
-        let trip_len = s_trips.len();
 
         for (
             trip_id,
@@ -207,6 +229,56 @@ impl ScheduleIR {
 impl From<gtfs_parsing::schedule::Schedule> for ScheduleIR {
     fn from(value: gtfs_parsing::schedule::Schedule) -> Self {
         Self::try_from_schedule_with_date(value, get_nyc_datetime().date_naive())
+    }
+}
+
+impl From<ScheduleIR> for FullSchedule {
+    fn from(value: ScheduleIR) -> Self {
+        let ScheduleIR {
+            routes: base_routes,
+            shapes: base_shapes,
+            stops: base_stops,
+        } = value;
+        let mut routes: Vec<Route> = Vec::new();
+        for RouteIR {
+            route_id,
+            trips: base_trips,
+        } in base_routes.into_values()
+        {
+            let mut trips: Vec<Trip> = Vec::new();
+            for TripIR {
+                trip_id,
+                headsign,
+                shape_id,
+                direction,
+                stop_times,
+                ..
+            } in base_trips.into_values()
+            {
+                let stop_times: Vec<StopTime> = stop_times.into_values().collect();
+                trips.push(Trip {
+                    trip_id: Some(trip_id.clone()),
+                    headsign,
+                    shape_id,
+                    stop_times,
+                    direction,
+                })
+            }
+
+            routes.push(Route {
+                route_id: Some(route_id),
+                trips,
+            });
+        }
+
+        let shapes: Vec<Shape> = base_shapes.into_values().collect();
+        let stops: Vec<Stop> = base_stops.into_values().collect();
+
+        Self {
+            routes,
+            shapes,
+            stops,
+        }
     }
 }
 
@@ -379,6 +451,72 @@ pub struct ScheduleUpdate {
     pub removed_stop_ids: HashSet<String>,
 }
 
+impl From<ScheduleUpdate> for ScheduleDiff {
+    fn from(value: ScheduleUpdate) -> Self {
+        let ScheduleUpdate {
+            route_diffs: base_route_diffs,
+            added_stops: base_added_stops,
+            added_shapes: base_added_shapes,
+            removed_stop_ids: base_removed_stop_ids,
+            removed_shape_ids: base_removed_shape_ids,
+        } = value;
+
+        let added_stops = base_added_stops.into_values().collect();
+        let added_shapes = base_added_shapes.into_values().collect();
+        let removed_shape_ids = base_removed_shape_ids.into_iter().collect();
+        let removed_stop_ids = base_removed_stop_ids.into_iter().collect();
+
+        let mut route_diffs = Vec::new();
+
+        for RouteTripsDiff {
+            route_id,
+            added_trips: base_added_trips,
+            removed_trip_ids: base_removed_trip_ids,
+            trip_diffs: base_trip_diffs,
+        } in base_route_diffs.into_iter()
+        {
+            let mut trip_diffs = Vec::new();
+
+            let added_trips = base_added_trips
+                .into_values()
+                .map(|t| {
+                    let TripIR {
+                        trip_id,
+                        stop_times,
+                        headsign,
+                        shape_id,
+                        direction,
+                    } = t;
+                    let stop_times = stop_times.into_values().collect();
+                    Trip {
+                        trip_id: Some(trip_id),
+                        stop_times,
+                        headsign,
+                        shape_id,
+                        direction,
+                    }
+                })
+                .collect();
+            let removed_trip_ids = base_removed_trip_ids.into_iter().collect();
+
+            route_diffs.push(crate::shared::db_transit::RouteTripsDiff {
+                route_id: Some(route_id),
+                trip_diffs,
+                added_trips,
+                removed_trip_ids,
+            })
+        }
+
+        Self {
+            route_diffs,
+            added_shapes,
+            removed_shape_ids,
+            added_stops,
+            removed_stop_ids,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteTripsDiff {
     pub route_id: String,
@@ -477,24 +615,30 @@ mod tests {
 
     use chrono::NaiveDate;
 
-    use crate::shared::db_transit::{Position, Shape, Stop, StopTime};
+    use crate::shared::db_transit::{FullSchedule, Position, Shape, Stop, StopTime};
 
     use super::{ScheduleIR, TripIR, TripStopTimesDiff};
 
     macro_rules! setup_new_schedule {
-        ($bounds:expr) => {{
-            let agency_reader = std::fs::File::open("./gtfs_data/schedule/agency.txt").unwrap();
-            let stop_reader = std::fs::File::open("./gtfs_data/schedule/stops.txt").unwrap();
+        ($dir:expr, $bounds:expr) => {{
+            let agency_reader =
+                std::fs::File::open(format!("./gtfs_data/{}/agency.txt", $dir)).unwrap();
+            let stop_reader =
+                std::fs::File::open(format!("./gtfs_data/{}/stops.txt", $dir)).unwrap();
             let stop_time_reader =
-                std::fs::File::open("./gtfs_data/schedule/stop_times.txt").unwrap();
-            let service_reader = std::fs::File::open("./gtfs_data/schedule/calendar.txt").unwrap();
+                std::fs::File::open(format!("./gtfs_data/{}/stop_times.txt", $dir)).unwrap();
+            let service_reader =
+                std::fs::File::open(format!("./gtfs_data/{}/calendar.txt", $dir)).unwrap();
             let service_exception_reader =
-                std::fs::File::open("./gtfs_data/schedule/calendar_dates.txt").unwrap();
-            let shape_reader = std::fs::File::open("./gtfs_data/schedule/shapes.txt").unwrap();
+                std::fs::File::open(format!("./gtfs_data/{}/calendar_dates.txt", $dir)).unwrap();
+            let shape_reader =
+                std::fs::File::open(format!("./gtfs_data/{}/shapes.txt", $dir)).unwrap();
             let transfer_reader =
-                std::fs::File::open("./gtfs_data/schedule/transfers.txt").unwrap();
-            let route_reader = std::fs::File::open("./gtfs_data/schedule/routes.txt").unwrap();
-            let trip_reader = std::fs::File::open("./gtfs_data/schedule/trips.txt").unwrap();
+                std::fs::File::open(format!("./gtfs_data/{}/transfers.txt", $dir)).unwrap();
+            let route_reader =
+                std::fs::File::open(format!("./gtfs_data/{}/routes.txt", $dir)).unwrap();
+            let trip_reader =
+                std::fs::File::open(format!("./gtfs_data/{}/trips.txt", $dir)).unwrap();
 
             gtfs_parsing::schedule::Schedule::from_readers(
                 agency_reader,
@@ -518,9 +662,12 @@ mod tests {
     #[test]
     #[ignore]
     fn test_schedule_ir() {
-        let schedule = setup_new_schedule!(None).unwrap();
-        let schedule_abbrev =
-            setup_new_schedule!(Some((&"20250217".to_owned(), &"20250217".to_owned()))).unwrap();
+        let schedule = setup_new_schedule!("schedule", None).unwrap();
+        let schedule_abbrev = setup_new_schedule!(
+            "schedule",
+            Some((&"20250217".to_owned(), &"20250217".to_owned()))
+        )
+        .unwrap();
 
         let schedule_ir_abbrev = ScheduleIR::try_from_schedule_with_date(
             schedule_abbrev,
@@ -839,5 +986,224 @@ mod tests {
 
         assert_eq!(removed_stop_time_seq.iter().collect::<Vec<_>>(), vec![&ss1]);
         assert_eq!(added_vec, exp_added);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_diff_full() {
+        let schedule1: ScheduleIR = setup_new_schedule!("schedule", None).unwrap().into();
+        let schedule2: ScheduleIR = setup_new_schedule!("schedule_alt", None).unwrap().into();
+
+        let two_minus_one = schedule2.get_diff(&schedule1);
+        let one_minus_two = schedule1.get_diff(&schedule2);
+
+        assert_eq!(one_minus_two.route_diffs.len(), 30);
+        assert_eq!(one_minus_two.added_shapes.len(), 0);
+        assert_eq!(one_minus_two.removed_shape_ids.len(), 0);
+        assert_eq!(one_minus_two.added_stops.len(), 0);
+        assert_eq!(one_minus_two.removed_stop_ids.len(), 0);
+        assert_eq!(
+            one_minus_two
+                .route_diffs
+                .iter()
+                .flat_map(|d| d.added_trips.iter())
+                .count(),
+            4768
+        );
+        assert_eq!(
+            one_minus_two
+                .route_diffs
+                .iter()
+                .flat_map(|d| d.removed_trip_ids.iter())
+                .count(),
+            4882
+        );
+        assert_eq!(
+            one_minus_two
+                .route_diffs
+                .iter()
+                .flat_map(|d| d.trip_diffs.iter())
+                .flat_map(|d| d.added_stop_times.iter())
+                .count(),
+            0
+        );
+        assert_eq!(
+            one_minus_two
+                .route_diffs
+                .iter()
+                .flat_map(|d| d.trip_diffs.iter())
+                .flat_map(|d| d.removed_stop_time_seq.iter())
+                .count(),
+            0
+        );
+        assert_eq!(two_minus_one.route_diffs.len(), 30);
+        assert_eq!(two_minus_one.added_shapes.len(), 0);
+        assert_eq!(two_minus_one.removed_shape_ids.len(), 0);
+        assert_eq!(two_minus_one.added_stops.len(), 0);
+        assert_eq!(two_minus_one.removed_stop_ids.len(), 0);
+        assert_eq!(
+            two_minus_one
+                .route_diffs
+                .iter()
+                .flat_map(|d| d.added_trips.iter())
+                .count(),
+            4882
+        );
+        assert_eq!(
+            two_minus_one
+                .route_diffs
+                .iter()
+                .flat_map(|d| d.removed_trip_ids.iter())
+                .count(),
+            4768
+        );
+        assert_eq!(
+            two_minus_one
+                .route_diffs
+                .iter()
+                .flat_map(|d| d.trip_diffs.iter())
+                .flat_map(|d| d.added_stop_times.iter())
+                .count(),
+            0
+        );
+        assert_eq!(
+            two_minus_one
+                .route_diffs
+                .iter()
+                .flat_map(|d| d.trip_diffs.iter())
+                .flat_map(|d| d.removed_stop_time_seq.iter())
+                .count(),
+            0
+        );
+
+        let exp_schedule1 = one_minus_two.apply_to_schedule(schedule2.clone());
+        assert_eq!(schedule1.routes.len(), exp_schedule1.routes.len());
+        let (mut s1_trips, mut es1_trips): (Vec<_>, Vec<_>) = (
+            schedule1
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .collect(),
+            exp_schedule1
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .collect(),
+        );
+        s1_trips.sort_by_key(|t| &t.trip_id);
+        es1_trips.sort_by_key(|t| &t.trip_id);
+        assert_eq!(s1_trips, es1_trips);
+        let (mut s1_times, mut es1_times): (Vec<_>, Vec<_>) = (
+            s1_trips
+                .iter()
+                .flat_map(|t| t.stop_times.values())
+                .collect(),
+            es1_trips
+                .iter()
+                .flat_map(|t| t.stop_times.values())
+                .collect(),
+        );
+        s1_times.sort_by_key(|t| t.stop_sequence);
+        es1_times.sort_by_key(|t| t.stop_sequence);
+        assert_eq!(s1_times, es1_times);
+        let (mut s1_shapes, mut es1_shapes): (Vec<_>, Vec<_>) = (
+            schedule1.shapes.values().collect(),
+            exp_schedule1.shapes.values().collect(),
+        );
+        s1_shapes.sort_by_key(|s| &s.shape_id);
+        es1_shapes.sort_by_key(|s| &s.shape_id);
+        assert_eq!(s1_shapes, es1_shapes);
+        let (mut s1_stops, mut es1_stops): (Vec<_>, Vec<_>) = (
+            schedule1.stops.values().collect(),
+            exp_schedule1.stops.values().collect(),
+        );
+        s1_stops.sort_by_key(|s| &s.stop_id);
+        es1_stops.sort_by_key(|s| &s.stop_id);
+        assert_eq!(s1_stops, es1_stops);
+        assert_eq!(schedule1, exp_schedule1);
+
+        let exp_schedule2 = two_minus_one.apply_to_schedule(schedule1);
+        assert_eq!(schedule2.routes.len(), exp_schedule2.routes.len());
+        let (mut s2_trips, mut es2_trips): (Vec<_>, Vec<_>) = (
+            schedule2
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .collect(),
+            exp_schedule2
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .collect(),
+        );
+        s2_trips.sort_by_key(|t| &t.trip_id);
+        es2_trips.sort_by_key(|t| &t.trip_id);
+        assert_eq!(s2_trips, es2_trips);
+        let (mut s2_times, mut es2_times): (Vec<_>, Vec<_>) = (
+            s2_trips
+                .iter()
+                .flat_map(|t| t.stop_times.values())
+                .collect(),
+            es2_trips
+                .iter()
+                .flat_map(|t| t.stop_times.values())
+                .collect(),
+        );
+        s2_times.sort_by_key(|t| t.stop_sequence);
+        es2_times.sort_by_key(|t| t.stop_sequence);
+        assert_eq!(s2_times, es2_times);
+        let (mut s2_shapes, mut es2_shapes): (Vec<_>, Vec<_>) = (
+            schedule2.shapes.values().collect(),
+            exp_schedule2.shapes.values().collect(),
+        );
+        s2_shapes.sort_by_key(|s| &s.shape_id);
+        es2_shapes.sort_by_key(|s| &s.shape_id);
+        assert_eq!(s2_shapes, es2_shapes);
+        let (mut s2_stops, mut es2_stops): (Vec<_>, Vec<_>) = (
+            schedule2.stops.values().collect(),
+            exp_schedule2.stops.values().collect(),
+        );
+        s2_stops.sort_by_key(|s| &s.stop_id);
+        es2_stops.sort_by_key(|s| &s.stop_id);
+        assert_eq!(s2_stops, es2_stops);
+        assert_eq!(schedule2, exp_schedule2);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_from_ir() {
+        let schedule: ScheduleIR = setup_new_schedule!("schedule", None).unwrap().into();
+        let full_schedule: FullSchedule = schedule.clone().into();
+
+        assert_eq!(schedule.routes.len(), full_schedule.routes.len());
+        assert_eq!(schedule.shapes.len(), full_schedule.shapes.len());
+        assert_eq!(schedule.stops.len(), full_schedule.stops.len());
+
+        assert_eq!(
+            schedule
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .count(),
+            full_schedule
+                .routes
+                .iter()
+                .flat_map(|r| r.trips.iter())
+                .count()
+        );
+        assert_eq!(
+            schedule
+                .routes
+                .values()
+                .flat_map(|r| r.trips.values())
+                .flat_map(|t| t.stop_times.values())
+                .count(),
+            full_schedule
+                .routes
+                .iter()
+                .flat_map(|r| r.trips.iter())
+                .flat_map(|t| t.stop_times.iter())
+                .count()
+        );
     }
 }

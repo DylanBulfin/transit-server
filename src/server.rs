@@ -1,15 +1,13 @@
-use std::{io::Cursor, time::Duration};
+use std::time::Duration;
 
 use blake3::Hash;
 use chrono::{DateTime, Days, Timelike};
 use chrono::{Local, Utc};
-use chrono_tz::{America::New_York, Tz};
-use gtfs_parsing::schedule::Schedule;
+use chrono_tz::Tz;
 use tokio::time::sleep;
 use tonic::{codec::CompressionEncoding, transport::Server};
-use transit_server::shared::{self, UPDATE_LOCK};
-use zip::ZipArchive;
 
+use transit_server::shared;
 use transit_server::{
     error::ScheduleError,
     shared::{
@@ -61,49 +59,50 @@ async fn get_update(
 }
 
 async fn update_loop() -> Result<(), ScheduleError> {
+    return unimplemented!();
     let (mut curr_schedule, mut curr_hash) = get_update(None)
         .await?
         .expect("Unable to get initial schedule");
 
-    // Send initial schedule to waiting server loop
-    let update_global = async |sch: ScheduleResponse| {
-        println!("Boutta grab lock");
-        let mut lock = shared::UPDATE_LOCK.write().await;
-        *lock = Some(sch.clone());
-        println!("Boutta release lock");
-    };
-
-    update_global(curr_schedule).await;
-
-    // Calculate the next update time, from testing it seems like updates happen around the HH:30
-    // mark
-    let mut next_update = get_next_update(shared::get_nyc_datetime());
-
-    loop {
-        if shared::get_nyc_datetime() >= next_update {
-            match get_update(Some(curr_hash)).await? {
-                Some((new_schedule, new_hash)) => {
-                    println!("Found new update at {}", Utc::now());
-                    curr_schedule = new_schedule;
-                    curr_hash = new_hash;
-                    update_global(curr_schedule).await;
-                }
-                None => println!("No new update at {}", Utc::now()),
-            }
-
-            next_update = get_next_update(shared::get_nyc_datetime());
-        }
-
-        sleep(Duration::new(10, 0)).await;
-    }
+    // // Send initial schedule to waiting server loop
+    // let update_global = async |sch: ScheduleResponse| {
+    //     println!("Boutta grab lock");
+    //     let mut lock = shared::BASE_LOCK.write().await;
+    //     *lock = Some(sch.clone());
+    //     println!("Boutta release lock");
+    // };
+    //
+    // update_global(curr_schedule).await;
+    //
+    // // Calculate the next update time, from testing it seems like updates happen around the HH:30
+    // // mark
+    // let mut next_update = get_next_update(shared::get_nyc_datetime());
+    //
+    // loop {
+    //     if shared::get_nyc_datetime() >= next_update {
+    //         match get_update(Some(curr_hash)).await? {
+    //             Some((new_schedule, new_hash)) => {
+    //                 println!("Found new update at {}", Utc::now());
+    //                 curr_schedule = new_schedule;
+    //                 curr_hash = new_hash;
+    //                 update_global(curr_schedule).await;
+    //             }
+    //             None => println!("No new update at {}", Utc::now()),
+    //         }
+    //
+    //         next_update = get_next_update(shared::get_nyc_datetime());
+    //     }
+    //
+    //     sleep(Duration::new(10, 0)).await;
+    // }
 }
 
 async fn server_loop() -> Result<(), ScheduleError> {
     println!("Server waiting for initial schedule");
     // Try to get initial schedule
-    while let None = *UPDATE_LOCK.read().await {
-        sleep(Duration::new(1, 0)).await;
-    }
+    // while let None = *UPDATE_LOCK.read().await {
+    //     sleep(Duration::new(1, 0)).await;
+    // }
 
     println!(
         "Server thread recieved initial schedule at {}",
