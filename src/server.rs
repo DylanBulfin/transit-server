@@ -1,20 +1,22 @@
+use std::collections::HashMap;
+use std::io::Cursor;
 use std::time::Duration;
 
 use blake3::Hash;
+use chrono::Local;
 use chrono::{DateTime, Days, Timelike};
-use chrono::{Local, Utc};
 use chrono_tz::Tz;
+use gtfs_parsing::schedule::Schedule;
 use tokio::time::sleep;
 use tonic::{codec::CompressionEncoding, transport::Server};
 
-use transit_server::shared;
+use transit_server::diff::ScheduleIR;
+use transit_server::shared::{DIFFS_LOCK, FULL_LOCK, HISTORY_LOCK, get_nyc_datetime};
 use transit_server::{
     error::ScheduleError,
-    shared::{
-        ScheduleService,
-        db_transit::{ScheduleResponse, schedule_server::ScheduleServer},
-    },
+    shared::{ScheduleService, db_transit::schedule_server::ScheduleServer},
 };
+use zip::ZipArchive;
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
 
@@ -49,60 +51,136 @@ fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
 /// Get the current MTA zip file, check it for differences using the optional hash, and process it
 async fn get_update(
     old_hash: Option<Hash>,
-) -> Result<Option<(ScheduleResponse, Hash)>, ScheduleError> {
-    return unimplemented!();
-
+    old_schedule: Option<&ScheduleIR>,
+) -> Result<(Option<ScheduleIR>, Option<Hash>), ScheduleError> {
     let resp: Vec<u8> = reqwest::get(SUPP_URL).await?.bytes().await?.into();
 
     let hash = blake3::hash(resp.as_slice());
-    unimplemented!();
+
+    if old_hash.is_some() && old_hash.unwrap() == hash {
+        // No need to update, hash is the same as previous
+        Ok((None, None))
+    } else {
+        let schedule: ScheduleIR = Schedule::from_zip(ZipArchive::new(Cursor::new(resp))?, None)
+            .ok_or("Unable to parse server response")?
+            .into();
+
+        // Check equality directly, we can save a lot of space if updates are infrequent
+        if old_schedule.is_some() && old_schedule.unwrap() == &schedule {
+            Ok((None, Some(hash)))
+        } else {
+            Ok((Some(schedule), Some(hash)))
+        }
+    }
+}
+
+async fn update_global_state(schedule: ScheduleIR, is_new_day: bool) {
+    let time = get_nyc_datetime();
+
+    println!("{}: Starting global state update", time.time());
+
+    let timestamp = time.timestamp();
+
+    if is_new_day {
+        *(HISTORY_LOCK.write().await) = vec![(timestamp as u32, schedule.clone().into())];
+        *(FULL_LOCK.write().await) = Some(schedule.clone().into());
+
+        let mut diffs_map = HashMap::new();
+        diffs_map.insert(timestamp as u32, schedule.get_diff(&schedule).into());
+
+        *(DIFFS_LOCK.write().await) = diffs_map;
+    } else {
+        HISTORY_LOCK
+            .write()
+            .await
+            .push((timestamp as u32, schedule.clone()));
+        *(FULL_LOCK.write().await) = Some(schedule.clone().into());
+
+        let mut diffs_map = HashMap::new();
+        for (p_timestamp, p_schedule) in HISTORY_LOCK.read().await.iter() {
+            diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
+        }
+
+        *(DIFFS_LOCK.write().await) = diffs_map;
+    }
+
+    verify_global_state().await;
+
+    println!("{}: Finished global state update", time.time());
+}
+
+async fn verify_global_state() {
+    println!(
+        "Global state contains {} diffs",
+        HISTORY_LOCK.read().await.len()
+    );
+
+    assert_eq!(
+        HISTORY_LOCK.read().await.len(),
+        DIFFS_LOCK.read().await.len()
+    );
+    let mut h_times: Vec<u32> = HISTORY_LOCK.read().await.iter().map(|h| h.0).collect();
+    let mut d_times: Vec<u32> = DIFFS_LOCK.read().await.keys().cloned().collect();
+    h_times.sort();
+    d_times.sort();
+
+    assert_eq!(h_times, d_times);
+
+    for (timestamp, diff) in DIFFS_LOCK.read().await.iter() {
+        println!(
+            "Timestamp {} contains {} route diffs, and a total of {} trip diffs",
+            timestamp,
+            diff.route_diffs.len(),
+            diff.route_diffs
+                .iter()
+                .flat_map(|d| d.trip_diffs.iter())
+                .count()
+        );
+    }
 }
 
 async fn update_loop() -> Result<(), ScheduleError> {
-    return unimplemented!();
-    let (mut curr_schedule, mut curr_hash) = get_update(None)
-        .await?
-        .expect("Unable to get initial schedule");
+    let update = get_update(None, None).await?;
+    let (mut curr_schedule, mut curr_hash) = (
+        update.0.expect("Unable to get initial schedule"),
+        update.1.expect("Unable to get initial hash"),
+    );
 
-    // // Send initial schedule to waiting server loop
-    // let update_global = async |sch: ScheduleResponse| {
-    //     println!("Boutta grab lock");
-    //     let mut lock = shared::BASE_LOCK.write().await;
-    //     *lock = Some(sch.clone());
-    //     println!("Boutta release lock");
-    // };
-    //
-    // update_global(curr_schedule).await;
-    //
-    // // Calculate the next update time, from testing it seems like updates happen around the HH:30
-    // // mark
-    // let mut next_update = get_next_update(shared::get_nyc_datetime());
-    //
-    // loop {
-    //     if shared::get_nyc_datetime() >= next_update {
-    //         match get_update(Some(curr_hash)).await? {
-    //             Some((new_schedule, new_hash)) => {
-    //                 println!("Found new update at {}", Utc::now());
-    //                 curr_schedule = new_schedule;
-    //                 curr_hash = new_hash;
-    //                 update_global(curr_schedule).await;
-    //             }
-    //             None => println!("No new update at {}", Utc::now()),
-    //         }
-    //
-    //         next_update = get_next_update(shared::get_nyc_datetime());
-    //     }
-    //
-    //     sleep(Duration::new(10, 0)).await;
-    // }
+    update_global_state(curr_schedule.clone(), true).await;
+
+    let mut next_update = get_next_update(get_nyc_datetime());
+
+    loop {
+        if get_nyc_datetime() >= next_update {
+            match get_update(Some(curr_hash), Some(&curr_schedule)).await? {
+                (Some(new_schedule), Some(new_hash)) => {
+                    println!("Found new update at {}", get_nyc_datetime().time());
+                    (curr_schedule, curr_hash) = (new_schedule, new_hash);
+                    // TODO fix the logic on entering new day
+                    update_global_state(curr_schedule.clone(), false).await;
+                }
+                (None, Some(new_hash)) => {
+                    println!(
+                        "Found immaterial new update at {}",
+                        get_nyc_datetime().time()
+                    );
+                    curr_hash = new_hash;
+                }
+                (None, None) => println!("No new update at {}", get_nyc_datetime().time()),
+                u => panic!("Unexpected result: {:?}", u),
+            }
+
+            next_update = get_next_update(get_nyc_datetime());
+        }
+    }
 }
 
 async fn server_loop() -> Result<(), ScheduleError> {
     println!("Server waiting for initial schedule");
     // Try to get initial schedule
-    // while let None = *UPDATE_LOCK.read().await {
-    //     sleep(Duration::new(1, 0)).await;
-    // }
+    while let None = *FULL_LOCK.read().await {
+        sleep(Duration::new(1, 0)).await;
+    }
 
     println!(
         "Server thread recieved initial schedule at {}",
@@ -125,6 +203,10 @@ async fn server_loop() -> Result<(), ScheduleError> {
 #[tokio::main]
 async fn main() -> Result<(), ScheduleError> {
     loop {
+        println!(
+            "Starting new server instance at {}",
+            get_nyc_datetime().time()
+        );
         let server = tokio::spawn(async move { server_loop().await.unwrap_or_default() });
         let updater = tokio::spawn(async move { update_loop().await.unwrap_or_default() });
 
