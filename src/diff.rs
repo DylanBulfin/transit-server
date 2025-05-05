@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 
-use chrono::{Datelike, NaiveDate, Weekday};
+use chrono::{Datelike, Days, NaiveDate, Weekday};
 use gtfs_parsing::schedule::{calendar::ExceptionType, trips::DirectionType};
 
 use crate::shared::{
@@ -45,6 +45,9 @@ pub struct TripIR {
     pub headsign: Option<String>,
     pub shape_id: Option<String>,
     pub direction: Option<u32>,
+
+    pub mask_start_date: String,
+    pub date_mask: u32,
 }
 
 impl From<TripIR> for Trip {
@@ -55,6 +58,8 @@ impl From<TripIR> for Trip {
             headsign,
             shape_id,
             direction,
+            mask_start_date,
+            date_mask,
         } = value;
 
         Self {
@@ -63,6 +68,8 @@ impl From<TripIR> for Trip {
             headsign,
             shape_id,
             direction,
+            mask_start_date: Some(mask_start_date),
+            date_mask: Some(date_mask),
         }
     }
 }
@@ -71,9 +78,10 @@ impl From<TripIR> for Trip {
 impl Eq for TripIR {}
 
 impl ScheduleIR {
-    fn try_from_schedule_with_date(
+    fn try_from_schedule_with_dates(
         value: gtfs_parsing::schedule::Schedule,
-        date: NaiveDate,
+        start_date: NaiveDate,
+        days: u8,
     ) -> Self {
         let gtfs_parsing::schedule::Schedule {
             trips: s_trips,
@@ -98,9 +106,12 @@ impl ScheduleIR {
             );
         }
 
-        let today = date;
-        let today_str = format!("{:04}{:02}{:02}", today.year(), today.month(), today.day());
-        let today_dow = today.weekday();
+        let start_date_str = format!(
+            "{:04}{:02}{:02}",
+            start_date.year(),
+            start_date.month(),
+            start_date.day()
+        );
 
         for (
             trip_id,
@@ -114,26 +125,44 @@ impl ScheduleIR {
             },
         ) in s_trips
         {
-            let mut active = false;
-            if let Some(service) = s_services.get(service_id) {
-                active = match today_dow {
-                    Weekday::Mon => service.monday.into(),
-                    Weekday::Tue => service.tuesday.into(),
-                    Weekday::Wed => service.wednesday.into(),
-                    Weekday::Thu => service.thursday.into(),
-                    Weekday::Fri => service.friday.into(),
-                    Weekday::Sat => service.saturday.into(),
-                    Weekday::Sun => service.sunday.into(),
-                } && service.start_date <= today_str
-                    && service.end_date >= today_str;
-            }
-            if let Some(service_exceptions) = s_service_exceptions.get(service_id) {
-                if let Some(service_exception) = service_exceptions.get(&today_str) {
-                    active = service_exception.exception_type == ExceptionType::Added;
+            let mut date_mask = 0u32;
+
+            for day in 0..days {
+                let date = start_date
+                    .checked_add_days(Days::new(day as u64))
+                    .unwrap_or_else(|| {
+                        panic!("Unable to add {} days to date {}", days, start_date)
+                    });
+                let dow = date.weekday();
+                let date_str = format!("{:04}{:02}{:02}", date.year(), date.month(), date.day());
+
+                let mut active = false;
+
+                if let Some(service) = s_services.get(service_id) {
+                    active = match dow {
+                        Weekday::Mon => service.monday.into(),
+                        Weekday::Tue => service.tuesday.into(),
+                        Weekday::Wed => service.wednesday.into(),
+                        Weekday::Thu => service.thursday.into(),
+                        Weekday::Fri => service.friday.into(),
+                        Weekday::Sat => service.saturday.into(),
+                        Weekday::Sun => service.sunday.into(),
+                    } && service.start_date <= date_str
+                        && service.end_date >= date_str;
+                }
+                if let Some(service_exceptions) = s_service_exceptions.get(service_id) {
+                    if let Some(service_exception) = service_exceptions.get(&date_str) {
+                        active = service_exception.exception_type == ExceptionType::Added;
+                    }
+                }
+
+                if active {
+                    date_mask += 1 << day;
                 }
             }
 
-            if !active {
+            if date_mask == 0 {
+                // No active dates found, skip this trip
                 continue;
             }
 
@@ -150,14 +179,14 @@ impl ScheduleIR {
                 headsign,
                 direction: direction_id.map(|s| if s == DirectionType::Uptown { 0 } else { 1 }),
                 stop_times,
+                date_mask,
+                mask_start_date: start_date_str.clone(),
             };
 
             if let Some(route) = routes.get_mut(route_id) {
                 route.trips.insert(trip_id, trip);
             }
         }
-        //
-        // panic!("{} {} {}", trip_len, service_count, service_exc_count);
 
         let shapes: HashMap<String, Shape> = s_shapes
             .into_iter()
@@ -237,7 +266,8 @@ impl ScheduleIR {
 
 impl From<gtfs_parsing::schedule::Schedule> for ScheduleIR {
     fn from(value: gtfs_parsing::schedule::Schedule) -> Self {
-        Self::try_from_schedule_with_date(value, get_nyc_datetime().date_naive())
+        // By default, keep the next 32
+        Self::try_from_schedule_with_dates(value, get_nyc_datetime().date_naive(), 32)
     }
 }
 
@@ -597,7 +627,7 @@ mod tests {
 
     use crate::shared::db_transit::{FullSchedule, Position, Shape, Stop, StopTime};
 
-    use super::{ScheduleIR, TripIR, TripStopTimesUpdate};
+    use super::{RouteIR, ScheduleIR, TripIR, TripStopTimesUpdate};
 
     macro_rules! setup_new_schedule {
         ($dir:expr, $bounds:expr) => {{
@@ -852,6 +882,8 @@ mod tests {
             headsign: Some("TestSign1".to_owned()),
             shape_id: Some("TestShape1".to_owned()),
             direction: Some(1),
+            date_mask: 1,
+            mask_start_date: "20250401".to_owned(),
         };
         let trip2 = TripIR {
             trip_id: "TestTrip2".to_owned(),
@@ -859,6 +891,8 @@ mod tests {
             headsign: Some("TestSign2".to_owned()),
             shape_id: Some("TestShape2".to_owned()),
             direction: Some(2),
+            date_mask: 1,
+            mask_start_date: "20250401".to_owned(),
         };
 
         let TripStopTimesUpdate {
@@ -881,7 +915,7 @@ mod tests {
         let two_minus_one = schedule2.get_diff(&schedule1);
         let one_minus_two = schedule1.get_diff(&schedule2);
 
-        assert_eq!(one_minus_two.route_diffs.len(), 20);
+        assert_eq!(one_minus_two.route_diffs.len(), 26);
         assert_eq!(one_minus_two.added_shapes.len(), 0);
         assert_eq!(one_minus_two.removed_shape_ids.len(), 0);
         assert_eq!(one_minus_two.added_stops.len(), 0);
@@ -892,7 +926,7 @@ mod tests {
                 .iter()
                 .flat_map(|d| d.added_trips.iter())
                 .count(),
-            4768
+            6647
         );
         assert_eq!(
             one_minus_two
@@ -900,7 +934,7 @@ mod tests {
                 .iter()
                 .flat_map(|d| d.removed_trip_ids.iter())
                 .count(),
-            4882
+            6644
         );
         assert_eq!(
             one_minus_two
@@ -920,7 +954,7 @@ mod tests {
                 .count(),
             0
         );
-        assert_eq!(two_minus_one.route_diffs.len(), 20);
+        assert_eq!(two_minus_one.route_diffs.len(), 26);
         assert_eq!(two_minus_one.added_shapes.len(), 0);
         assert_eq!(two_minus_one.removed_shape_ids.len(), 0);
         assert_eq!(two_minus_one.added_stops.len(), 0);
@@ -931,7 +965,7 @@ mod tests {
                 .iter()
                 .flat_map(|d| d.added_trips.iter())
                 .count(),
-            4882
+            6644
         );
         assert_eq!(
             two_minus_one
@@ -939,7 +973,7 @@ mod tests {
                 .iter()
                 .flat_map(|d| d.removed_trip_ids.iter())
                 .count(),
-            4768
+            6647
         );
         assert_eq!(
             two_minus_one
@@ -1107,14 +1141,37 @@ mod tests {
         assert_eq!(diff2.removed_shape_ids.len(), 0);
     }
 
+    fn test_id_ne(schedule: ScheduleIR) {
+        let mut schedule2 = schedule.clone();
+
+        assert_eq!(schedule, schedule2);
+
+        schedule2.routes.get_mut("A").unwrap().trips.insert(
+            "Test Trip".to_owned(),
+            TripIR {
+                trip_id: "Test Trip".to_owned(),
+                stop_times: HashMap::new(),
+                headsign: None,
+                shape_id: None,
+                direction: None,
+                date_mask: 1,
+                mask_start_date: "20250401".to_owned(),
+            },
+        );
+
+        assert_ne!(schedule, schedule2);
+    }
+
     fn test_schedule_ir(schedule: Schedule, schedule_abbrev: Schedule) {
-        let schedule_ir_abbrev = ScheduleIR::try_from_schedule_with_date(
+        let schedule_ir_abbrev = ScheduleIR::try_from_schedule_with_dates(
             schedule_abbrev,
             NaiveDate::from_ymd_opt(2025, 2, 17).unwrap(),
+            1,
         );
-        let schedule_ir = ScheduleIR::try_from_schedule_with_date(
+        let schedule_ir = ScheduleIR::try_from_schedule_with_dates(
             schedule,
             NaiveDate::from_ymd_opt(2025, 2, 17).unwrap(),
+            1,
         );
 
         assert_eq!(schedule_ir.routes.len(), schedule_ir_abbrev.routes.len());
@@ -1189,6 +1246,26 @@ mod tests {
         );
     }
 
+    fn test_ranges(schedule: Schedule) {
+        let ScheduleIR { routes, .. } = ScheduleIR::try_from_schedule_with_dates(
+            schedule,
+            NaiveDate::from_ymd_opt(2025, 04, 01).unwrap(),
+            32,
+        );
+
+        for RouteIR { trips, .. } in routes.into_values() {
+            for TripIR {
+                date_mask,
+                mask_start_date,
+                ..
+            } in trips.into_values()
+            {
+                assert_eq!(mask_start_date, "20250401");
+                assert_ne!(date_mask, 0);
+            }
+        }
+    }
+
     #[test]
     #[ignore]
     fn long_running_tests() {
@@ -1200,12 +1277,23 @@ mod tests {
         .unwrap();
         let schedule_alt = setup_new_schedule!("schedule_alt", None).unwrap();
 
-        let schedule_ir: ScheduleIR = schedule.clone().into();
-        let schedule_ir2: ScheduleIR = schedule_alt.into();
+        let schedule_ir: ScheduleIR = ScheduleIR::try_from_schedule_with_dates(
+            schedule.clone(),
+            NaiveDate::from_ymd_opt(2025, 4, 28).unwrap(),
+            1,
+        );
+        let schedule_ir2: ScheduleIR = ScheduleIR::try_from_schedule_with_dates(
+            schedule_alt,
+            NaiveDate::from_ymd_opt(2025, 4, 28).unwrap(),
+            1,
+        );
 
-        test_schedule_ir(schedule, schedule_abbrev);
+        test_schedule_ir(schedule.clone(), schedule_abbrev);
         test_from_ir(schedule_ir.clone());
         test_id(schedule_ir.clone());
+        test_id_ne(schedule_ir.clone());
         test_diff_full(schedule_ir, schedule_ir2);
+
+        test_ranges(schedule);
     }
 }

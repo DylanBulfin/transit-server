@@ -31,6 +31,9 @@ message Trip {
   optional string shape_id = 3;
   repeated StopTime stop_times = 4;
   optional uint32 direction = 5;
+
+  optional string mask_start_date = 6;
+  optional uint32 date_mask = 7;
 }
 
 message StopTime {

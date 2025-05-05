@@ -49,6 +49,7 @@ fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
 }
 
 /// Get the current MTA zip file, check it for differences using the optional hash, and process it
+/// Leaves out any information outside of the current calendar day
 async fn get_update(
     old_hash: Option<Hash>,
     old_schedule: Option<&ScheduleIR>,
