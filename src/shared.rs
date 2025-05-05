@@ -15,9 +15,6 @@ pub mod db_transit {
     tonic::include_proto!("db_transit"); // The string specified here must match the proto package name
 }
 
-#[derive(Debug, Default)]
-pub struct ScheduleService {}
-
 // Holds the history of full schedule states for current day
 pub static HISTORY_LOCK: RwLock<Vec<(u32, ScheduleIR)>> = RwLock::const_new(Vec::new());
 
@@ -26,6 +23,9 @@ pub static FULL_LOCK: RwLock<Option<FullSchedule>> = RwLock::const_new(None);
 // Holds history of diffs, indexed by applicable timestamp
 pub static DIFFS_LOCK: LazyLock<RwLock<HashMap<u32, ScheduleDiff>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
+
+#[derive(Debug, Default)]
+pub struct ScheduleService {}
 
 pub fn get_nyc_datetime() -> DateTime<Tz> {
     let curr_time = Utc::now();

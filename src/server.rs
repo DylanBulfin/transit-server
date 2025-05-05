@@ -19,6 +19,7 @@ use transit_server::{
 use zip::ZipArchive;
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
+const MAX_HISTORY_LEN: usize = 10;
 
 fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
     const INTERVAL_M: u32 = 5;
@@ -75,35 +76,31 @@ async fn get_update(
     }
 }
 
-async fn update_global_state(schedule: ScheduleIR, is_new_day: bool) {
+async fn update_global_state(schedule: ScheduleIR) {
     let time = get_nyc_datetime();
 
     println!("{}: Starting global state update", time.time());
 
     let timestamp = time.timestamp();
 
-    if is_new_day {
-        *(HISTORY_LOCK.write().await) = vec![(timestamp as u32, schedule.clone().into())];
-        *(FULL_LOCK.write().await) = Some(schedule.clone().into());
+    let mut history_locked = HISTORY_LOCK.write().await;
+    let mut diffs_locked = DIFFS_LOCK.write().await;
 
-        let mut diffs_map = HashMap::new();
-        diffs_map.insert(timestamp as u32, schedule.get_diff(&schedule).into());
-
-        *(DIFFS_LOCK.write().await) = diffs_map;
-    } else {
-        HISTORY_LOCK
-            .write()
-            .await
-            .push((timestamp as u32, schedule.clone()));
-        *(FULL_LOCK.write().await) = Some(schedule.clone().into());
-
-        let mut diffs_map = HashMap::new();
-        for (p_timestamp, p_schedule) in HISTORY_LOCK.read().await.iter() {
-            diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
-        }
-
-        *(DIFFS_LOCK.write().await) = diffs_map;
+    // Remove the first entry
+    if history_locked.len() == MAX_HISTORY_LEN {
+        let (ts, _) = history_locked.remove(0);
+        diffs_locked.remove(&ts);
     }
+
+    history_locked.push((timestamp as u32, schedule.clone()));
+    *(FULL_LOCK.write().await) = Some(schedule.clone().into());
+
+    let mut diffs_map = HashMap::new();
+    for (p_timestamp, p_schedule) in HISTORY_LOCK.read().await.iter() {
+        diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
+    }
+
+    *diffs_locked = diffs_map;
 
     verify_global_state().await;
 
@@ -147,7 +144,7 @@ async fn update_loop() -> Result<(), ScheduleError> {
         update.1.expect("Unable to get initial hash"),
     );
 
-    update_global_state(curr_schedule.clone(), true).await;
+    update_global_state(curr_schedule.clone()).await;
 
     let mut next_update = get_next_update(get_nyc_datetime());
 
@@ -158,7 +155,7 @@ async fn update_loop() -> Result<(), ScheduleError> {
                     println!("Found new update at {}", get_nyc_datetime().time());
                     (curr_schedule, curr_hash) = (new_schedule, new_hash);
                     // TODO fix the logic on entering new day
-                    update_global_state(curr_schedule.clone(), false).await;
+                    update_global_state(curr_schedule.clone()).await;
                 }
                 (None, Some(new_hash)) => {
                     println!(
