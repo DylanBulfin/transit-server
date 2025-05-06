@@ -38,18 +38,27 @@ impl Schedule for ScheduleService {
         &self,
         _request: Request<ScheduleRequest>,
     ) -> Result<Response<ScheduleResponse>, Status> {
+        println!("Recieved new request at {:?}", get_nyc_datetime());
+        // Timestamp user was last updated
         let timestamp = _request.into_inner().timestamp.unwrap_or(0);
         let diff_map = DIFFS_LOCK.read().await;
 
+        // Timestamp for most recent state
+        let rec_timestamp: Option<u32> = HISTORY_LOCK.read().await.last().map(|(ts, _)| *ts);
+
         if diff_map.contains_key(&timestamp) {
+            println!("Done processing new request at {:?}", get_nyc_datetime());
             Ok(Response::new(ScheduleResponse {
                 full_schedule: None,
                 schedule_diff: diff_map.get(&timestamp).unwrap().clone().into(),
+                timestamp: rec_timestamp,
             }))
         } else if let Some(full_schedule) = FULL_LOCK.read().await.clone() {
+            println!("Done processing new request at {:?}", get_nyc_datetime());
             Ok(Response::new(ScheduleResponse {
                 full_schedule: Some(full_schedule),
                 schedule_diff: None,
+                timestamp: rec_timestamp,
             }))
         } else {
             Err(Status::new(tonic::Code::Internal, "Unable to find data"))

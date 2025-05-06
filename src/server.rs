@@ -83,24 +83,26 @@ async fn update_global_state(schedule: ScheduleIR) {
 
     let timestamp = time.timestamp();
 
-    let mut history_locked = HISTORY_LOCK.write().await;
-    let mut diffs_locked = DIFFS_LOCK.write().await;
+    {
+        let mut history_locked = HISTORY_LOCK.write().await;
+        let mut diffs_locked = DIFFS_LOCK.write().await;
 
-    // Remove the first entry
-    if history_locked.len() == MAX_HISTORY_LEN {
-        let (ts, _) = history_locked.remove(0);
-        diffs_locked.remove(&ts);
+        // Remove the first entry
+        if history_locked.len() == MAX_HISTORY_LEN {
+            let (ts, _) = history_locked.remove(0);
+            diffs_locked.remove(&ts);
+        }
+
+        history_locked.push((timestamp as u32, schedule.clone()));
+        *(FULL_LOCK.write().await) = Some(schedule.clone().into());
+
+        let mut diffs_map = HashMap::new();
+        for (p_timestamp, p_schedule) in history_locked.iter() {
+            diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
+        }
+
+        *diffs_locked = diffs_map;
     }
-
-    history_locked.push((timestamp as u32, schedule.clone()));
-    *(FULL_LOCK.write().await) = Some(schedule.clone().into());
-
-    let mut diffs_map = HashMap::new();
-    for (p_timestamp, p_schedule) in HISTORY_LOCK.read().await.iter() {
-        diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
-    }
-
-    *diffs_locked = diffs_map;
 
     verify_global_state().await;
 
@@ -170,6 +172,8 @@ async fn update_loop() -> Result<(), ScheduleError> {
 
             next_update = get_next_update(get_nyc_datetime());
         }
+
+        sleep(Duration::new(30, 0)).await;
     }
 }
 

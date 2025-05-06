@@ -10,8 +10,9 @@ message ScheduleRequest {
 }
 
 message ScheduleResponse {
-  optional FullSchedule full_schedule = 1;
-  optional ScheduleDiff schedule_diff = 2;
+  optional uint32 timestamp = 1;
+  optional FullSchedule full_schedule = 2;
+  optional ScheduleDiff schedule_diff = 3;
 }
 
 message FullSchedule {
