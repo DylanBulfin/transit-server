@@ -11,7 +11,9 @@ message ScheduleRequest {
 
 message ScheduleResponse {
   optional uint32 timestamp = 1;
-  optional FullSchedule full_schedule = 2;
+  // optional FullSchedule full_schedule = 2;
+  // Pre-compressed since compression step seems to take by far the longest
+  optional bytes full_schedule = 2;
   optional ScheduleDiff schedule_diff = 3;
 }
 

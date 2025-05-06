@@ -39,6 +39,7 @@ blake3 = "1.8.1"
 # handle time comparisons (checking when to update, converting time zones)
 chrono = "0.4.40"
 chrono-tz = "0.10.3"
+flate2 = "1.1.1"
 
 [build-dependencies]
 # client/server codegen additional requirements

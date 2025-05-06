@@ -2027,6 +2027,7 @@ dependencies = [
  "blake3",
  "chrono",
  "chrono-tz",
+ "flate2",
  "gtfs-parsing",
  "prost",
  "reqwest",

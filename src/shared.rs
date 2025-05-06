@@ -1,5 +1,7 @@
 use std::{collections::HashMap, sync::LazyLock};
 
+use prost::Message;
+
 use chrono::{DateTime, Utc};
 use chrono_tz::{America::New_York, Tz};
 
@@ -19,7 +21,7 @@ pub mod db_transit {
 pub static HISTORY_LOCK: RwLock<Vec<(u32, ScheduleIR)>> = RwLock::const_new(Vec::new());
 
 // Holds the full state of the schedule in GRPC format
-pub static FULL_LOCK: RwLock<Option<FullSchedule>> = RwLock::const_new(None);
+pub static FULL_LOCK: RwLock<Option<Vec<u8>>> = RwLock::const_new(None);
 // Holds history of diffs, indexed by applicable timestamp
 pub static DIFFS_LOCK: LazyLock<RwLock<HashMap<u32, ScheduleDiff>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -53,10 +55,10 @@ impl Schedule for ScheduleService {
                 schedule_diff: diff_map.get(&timestamp).unwrap().clone().into(),
                 timestamp: rec_timestamp,
             }))
-        } else if let Some(full_schedule) = FULL_LOCK.read().await.clone() {
+        } else if let Some(bytes) = FULL_LOCK.read().await.clone() {
             println!("Done processing new request at {:?}", get_nyc_datetime());
             Ok(Response::new(ScheduleResponse {
-                full_schedule: Some(full_schedule),
+                full_schedule: Some(bytes),
                 schedule_diff: None,
                 timestamp: rec_timestamp,
             }))
