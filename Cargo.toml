@@ -16,7 +16,7 @@ path = "src/client.rs"
 
 [dependencies]
 # gRPC server
-tonic = {version = "*", features = ["gzip"]}
+tonic = {version = "*", features = ["gzip", "zstd"]}
 
 # protobuf codegen
 prost = "0.13"

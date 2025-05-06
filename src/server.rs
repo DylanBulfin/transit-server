@@ -194,7 +194,8 @@ async fn server_loop() -> Result<(), ScheduleError> {
     Server::builder()
         .add_service(
             ScheduleServer::new(ScheduleService::default())
-                .send_compressed(CompressionEncoding::Gzip),
+                // .send_compressed(CompressionEncoding::Gzip),
+                .send_compressed(CompressionEncoding::Zstd),
         )
         .serve(addr)
         .await?;
