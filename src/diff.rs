@@ -489,6 +489,47 @@ impl From<ScheduleUpdate> for ScheduleDiff {
     }
 }
 
+// r1, r2 = whether element in question is in removed_<>_ids for self and other
+// a1, a2 = same but in added map
+// returns (aT, rT),
+// rT = whether in final removal list
+// aT = whether in final added map, and which version to use (None is not in it, false is list 1,
+// true list 2
+fn get_diff_diff_mask(r1: bool, r2: bool, a1: bool, a2: bool) -> (bool, Option<bool>) {
+    match (r1 as u8) << 3 + (r2 as u8) << 2 + (a1 as u8) << 1 + a2 as u8 {
+        0b1111 | 0b0111 | 0b1101 | 0b1001 | 0b0101 => (true, Some(true)),
+        0b1010 => (true, Some(false)),
+        0b1110 | 0b0110 | 0b1000 | 0b0100 => (true, None),
+        0b0010 => (false, Some(false)),
+        0b0001 => (false, Some(true)),
+        0b0000 => (false, None),
+        0b1011 | 0b1100 | 0b0011 => panic!("Unexpected situation with diffs"),
+        a => panic!("Unexpected diff mask: {:b}", a),
+    }
+}
+
+impl ScheduleUpdate {
+    fn combine(&self, other: &ScheduleUpdate) -> Self {
+        let ScheduleUpdate {
+            removed_shape_ids,
+            removed_stop_ids,
+            added_shapes,
+            added_stops,
+            route_diffs,
+        } = self;
+
+        let ScheduleUpdate {
+            removed_shape_ids: other_removed_shape_ids,
+            removed_stop_ids: other_removed_stop_ids,
+            added_shapes: other_added_shapes,
+            added_stops: other_added_stops,
+            route_diffs: other_route_diffs,
+        } = other;
+
+        let all_shape_ids = 
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteTripsUpdate {
     pub route_id: String,
