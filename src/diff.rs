@@ -466,30 +466,6 @@ pub struct ScheduleUpdate {
     pub removed_stop_ids: HashSet<String>,
 }
 
-impl ScheduleUpdate {
-    fn add_diff(self, other: ScheduleUpdate) -> ScheduleDiff {
-        let ScheduleUpdate {
-            route_diffs,
-            added_stops,
-            added_shapes,
-            removed_stop_ids,
-            removed_shape_ids,
-        } = self;
-
-        let ScheduleUpdate {
-            route_diffs: other_route_diffs,
-            added_stops: other_added_stops,
-            added_shapes: other_added_shapes,
-            removed_stop_ids: other_removed_stop_ids,
-            removed_shape_ids: other_removed_shape_ids,
-        } = other;
-
-        let total_removed_stop_ids: HashSet<String> = Vec::new();
-
-        for 
-    }
-}
-
 impl From<ScheduleUpdate> for ScheduleDiff {
     fn from(value: ScheduleUpdate) -> Self {
         let ScheduleUpdate {
@@ -532,27 +508,27 @@ fn get_diff_diff_mask(r1: bool, r2: bool, a1: bool, a2: bool) -> (bool, Option<b
     }
 }
 
-impl ScheduleUpdate {
-    fn combine(&self, other: &ScheduleUpdate) -> Self {
-        let ScheduleUpdate {
-            removed_shape_ids,
-            removed_stop_ids,
-            added_shapes,
-            added_stops,
-            route_diffs,
-        } = self;
-
-        let ScheduleUpdate {
-            removed_shape_ids: other_removed_shape_ids,
-            removed_stop_ids: other_removed_stop_ids,
-            added_shapes: other_added_shapes,
-            added_stops: other_added_stops,
-            route_diffs: other_route_diffs,
-        } = other;
-
-        let all_shape_ids = 
-    }
-}
+// impl ScheduleUpdate {
+//     fn combine(&self, other: &ScheduleUpdate) -> Self {
+//         let ScheduleUpdate {
+//             removed_shape_ids,
+//             removed_stop_ids,
+//             added_shapes,
+//             added_stops,
+//             route_diffs,
+//         } = self;
+//
+//         let ScheduleUpdate {
+//             removed_shape_ids: other_removed_shape_ids,
+//             removed_stop_ids: other_removed_stop_ids,
+//             added_shapes: other_added_shapes,
+//             added_stops: other_added_stops,
+//             route_diffs: other_route_diffs,
+//         } = other;
+//
+//         let all_shape_ids = 
+//     }
+// }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteTripsUpdate {
@@ -646,7 +622,7 @@ impl ScheduleUpdate {
                 for trip_diff in route_diff.trip_diffs.iter() {
                     if let Entry::Occupied(mut e2) =
                         e.get_mut().trips.entry(trip_diff.trip_id.clone())
-                    {
+                   {
                         for stop_seq in trip_diff.removed_stop_time_seq.iter() {
                             e2.get_mut().stop_times.remove(stop_seq);
                         }

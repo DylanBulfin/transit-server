@@ -99,7 +99,7 @@ async fn update_global_state(schedule: ScheduleIR) {
             diffs_locked.remove(&ts);
         }
 
-        history_locked.push((timestamp as u32, schedule.clone()));
+        history_locked.push((timestamp as u32, schedule.clone().into()));
 
         let full_schedule: FullSchedule = schedule.clone().into();
 
