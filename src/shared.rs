@@ -18,7 +18,7 @@ pub mod db_transit {
 }
 
 // Holds the history of full schedule states for current day
-pub static HISTORY_LOCK: RwLock<Vec<(u32, ScheduleIR)>> = RwLock::const_new(Vec::new());
+pub static HISTORY_LOCK: RwLock<Vec<(u32, ScheduleDiff)>> = RwLock::const_new(Vec::new());
 
 // Holds the full state of the schedule in GRPC format
 pub static FULL_LOCK: RwLock<Option<Vec<u8>>> = RwLock::const_new(None);

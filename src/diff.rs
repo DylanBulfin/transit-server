@@ -466,6 +466,30 @@ pub struct ScheduleUpdate {
     pub removed_stop_ids: HashSet<String>,
 }
 
+impl ScheduleUpdate {
+    fn add_diff(self, other: ScheduleUpdate) -> ScheduleDiff {
+        let ScheduleUpdate {
+            route_diffs,
+            added_stops,
+            added_shapes,
+            removed_stop_ids,
+            removed_shape_ids,
+        } = self;
+
+        let ScheduleUpdate {
+            route_diffs: other_route_diffs,
+            added_stops: other_added_stops,
+            added_shapes: other_added_shapes,
+            removed_stop_ids: other_removed_stop_ids,
+            removed_shape_ids: other_removed_shape_ids,
+        } = other;
+
+        let total_removed_stop_ids: HashSet<String> = Vec::new();
+
+        for 
+    }
+}
+
 impl From<ScheduleUpdate> for ScheduleDiff {
     fn from(value: ScheduleUpdate) -> Self {
         let ScheduleUpdate {
