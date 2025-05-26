@@ -495,18 +495,19 @@ impl From<ScheduleUpdate> for ScheduleDiff {
 // rT = whether in final removal list
 // aT = whether in final added map, and which version to use (None is not in it, false is list 1,
 // true list 2
-fn get_diff_diff_mask(r1: bool, r2: bool, a1: bool, a2: bool) -> (bool, Option<bool>) {
-    match (r1 as u8) << 3 + (r2 as u8) << 2 + (a1 as u8) << 1 + a2 as u8 {
-        0b1111 | 0b0111 | 0b1101 | 0b1001 | 0b0101 => (true, Some(true)),
-        0b1010 => (true, Some(false)),
-        0b1110 | 0b0110 | 0b1000 | 0b0100 => (true, None),
-        0b0010 => (false, Some(false)),
-        0b0001 => (false, Some(true)),
-        0b0000 => (false, None),
-        0b1011 | 0b1100 | 0b0011 => panic!("Unexpected situation with diffs"),
-        a => panic!("Unexpected diff mask: {:b}", a),
-    }
-}
+
+// fn get_diff_diff_mask(r1: bool, r2: bool, a1: bool, a2: bool) -> (bool, Option<bool>) {
+//     match (r1 as u8) << 3 + (r2 as u8) << 2 + (a1 as u8) << 1 + a2 as u8 {
+//         0b1111 | 0b0111 | 0b1101 | 0b1001 | 0b0101 => (true, Some(true)),
+//         0b1010 => (true, Some(false)),
+//         0b1110 | 0b0110 | 0b1000 | 0b0100 => (true, None),
+//         0b0010 => (false, Some(false)),
+//         0b0001 => (false, Some(true)),
+//         0b0000 => (false, None),
+//         0b1011 | 0b1100 | 0b0011 => panic!("Unexpected situation with diffs"),
+//         a => panic!("Unexpected diff mask: {:b}", a),
+//     }
+// }
 
 // impl ScheduleUpdate {
 //     fn combine(&self, other: &ScheduleUpdate) -> Self {

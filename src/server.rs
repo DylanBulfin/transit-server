@@ -1,10 +1,6 @@
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::time::Duration;
-
-use flate2::Compression;
-use flate2::read::GzEncoder;
-use prost::Message;
 
 use blake3::Hash;
 use chrono::Local;
@@ -12,7 +8,6 @@ use chrono::{DateTime, Days, Timelike};
 use chrono_tz::Tz;
 use gtfs_parsing::schedule::Schedule;
 use tokio::time::sleep;
-use tonic::Response;
 use tonic::{codec::CompressionEncoding, transport::Server};
 
 use transit_server::diff::ScheduleIR;
@@ -22,7 +17,7 @@ use transit_server::{
     error::ScheduleError,
     shared::{ScheduleService, db_transit::schedule_server::ScheduleServer},
 };
-use zip::{ZipArchive, ZipWriter};
+use zip::ZipArchive;
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
 const MAX_HISTORY_LEN: usize = 10;
@@ -103,17 +98,17 @@ async fn update_global_state(schedule: ScheduleIR) {
 
         let full_schedule: FullSchedule = schedule.clone().into();
 
-        let mut encoder = GzEncoder::new(
-            Cursor::new(full_schedule.encode_to_vec()),
-            Compression::default(),
-        );
+        // let mut encoder = GzEncoder::new(
+        //     Cursor::new(full_schedule.encode_to_vec()),
+        //     Compression::default(),
+        // );
+        //
+        // let mut bytes: Vec<u8> = Vec::new();
+        // if let Err(e) = encoder.read_to_end(&mut bytes) {
+        //     println!("Encountered error while compressing output: {}", e);
+        // }
 
-        let mut bytes: Vec<u8> = Vec::new();
-        if let Err(e) = encoder.read_to_end(&mut bytes) {
-            println!("Encountered error while compressing output: {}", e);
-        }
-
-        *(FULL_LOCK.write().await) = Some(bytes);
+        *(FULL_LOCK.write().await) = Some(full_schedule);
 
         let mut diffs_map = HashMap::new();
         for (p_timestamp, p_schedule) in history_locked.iter() {
@@ -211,7 +206,10 @@ async fn server_loop() -> Result<(), ScheduleError> {
     let addr = "[::1]:50051".parse()?;
 
     Server::builder()
-        .add_service(ScheduleServer::new(ScheduleService::default()))
+        .add_service(
+            ScheduleServer::new(ScheduleService::default())
+                .send_compressed(CompressionEncoding::Gzip),
+        )
         .serve(addr)
         .await?;
 
