@@ -206,10 +206,7 @@ async fn server_loop() -> Result<(), ScheduleError> {
     let addr = "[::1]:50051".parse()?;
 
     Server::builder()
-        .add_service(
-            ScheduleServer::new(ScheduleService::default())
-                .send_compressed(CompressionEncoding::Gzip),
-        )
+        .add_service(ScheduleServer::new(ScheduleService::default()))
         .serve(addr)
         .await?;
 
