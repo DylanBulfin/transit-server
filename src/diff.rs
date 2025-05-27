@@ -652,7 +652,7 @@ impl From<gtfs_parsing::schedule::stop_times::StopTime> for StopTime {
             ..
         } = value;
         Self {
-            stop_id: Some("".to_owned()),
+            stop_id,
             arrival_time: time_str_to_int(arrival_time),
             departure_time: time_str_to_int(departure_time),
             stop_sequence: Some(stop_sequence),
@@ -682,10 +682,7 @@ mod tests {
     use chrono::NaiveDate;
     use gtfs_parsing::schedule::Schedule;
 
-    use crate::{
-        diff::time_str_to_int,
-        shared::db_transit::{FullSchedule, Position, Shape, Stop, StopTime},
-    };
+    use crate::{diff::time_str_to_int, shared::db_transit::{FullSchedule, Position, Shape, Stop, StopTime}};
 
     use super::{RouteIR, ScheduleIR, TripIR, TripStopTimesUpdate};
 
