@@ -41,8 +41,8 @@ message Trip {
 
 message StopTime {
   optional string stop_id = 1;
-  optional string arrival_time = 2;
-  optional string departure_time = 3;
+  optional uint32 arrival_time = 2;
+  optional uint32 departure_time = 3;
   optional uint32 stop_sequence = 4;
 }
 

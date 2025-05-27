@@ -527,7 +527,7 @@ impl From<ScheduleUpdate> for ScheduleDiff {
 //             route_diffs: other_route_diffs,
 //         } = other;
 //
-//         let all_shape_ids = 
+//         let all_shape_ids =
 //     }
 // }
 
@@ -623,7 +623,7 @@ impl ScheduleUpdate {
                 for trip_diff in route_diff.trip_diffs.iter() {
                     if let Entry::Occupied(mut e2) =
                         e.get_mut().trips.entry(trip_diff.trip_id.clone())
-                   {
+                    {
                         for stop_seq in trip_diff.removed_stop_time_seq.iter() {
                             e2.get_mut().stop_times.remove(stop_seq);
                         }
@@ -653,11 +653,26 @@ impl From<gtfs_parsing::schedule::stop_times::StopTime> for StopTime {
         } = value;
         Self {
             stop_id,
-            arrival_time,
-            departure_time,
+            arrival_time: time_str_to_int(arrival_time),
+            departure_time: time_str_to_int(departure_time),
             stop_sequence: Some(stop_sequence),
         }
     }
+}
+
+// Converts a time string to a number of seconds since midnight
+fn time_str_to_int(time: Option<String>) -> Option<u32> {
+    let parts: Vec<u32> = time?
+        .split(":")
+        .map(|p| p.parse::<u32>().unwrap_or_default())
+        .collect();
+
+    let mut res = 0u32;
+    for (i, part) in parts.into_iter().enumerate() {
+        res += part * 60u32.pow(i as u32);
+    }
+
+    Some(res)
 }
 
 #[cfg(test)]
@@ -667,7 +682,10 @@ mod tests {
     use chrono::NaiveDate;
     use gtfs_parsing::schedule::Schedule;
 
-    use crate::shared::db_transit::{FullSchedule, Position, Shape, Stop, StopTime};
+    use crate::{
+        diff::time_str_to_int,
+        shared::db_transit::{FullSchedule, Position, Shape, Stop, StopTime},
+    };
 
     use super::{RouteIR, ScheduleIR, TripIR, TripStopTimesUpdate};
 
@@ -884,26 +902,26 @@ mod tests {
         let ss3 = 13;
 
         let stop_time1 = StopTime {
-            arrival_time: Some("12:00:00".to_owned()),
-            departure_time: Some("13:00:00".to_owned()),
+            arrival_time: time_str_to_int(Some("12:00:00".to_owned())),
+            departure_time: time_str_to_int(Some("13:00:00".to_owned())),
             stop_sequence: Some(ss1),
             stop_id: Some(id1.clone()),
         };
         let stop_time2 = StopTime {
-            arrival_time: Some("22:00:00".to_owned()),
-            departure_time: Some("23:00:00".to_owned()),
+            arrival_time: time_str_to_int(Some("22:00:00".to_owned())),
+            departure_time: time_str_to_int(Some("23:00:00".to_owned())),
             stop_sequence: Some(ss2),
             stop_id: Some(id2.clone()),
         };
         let stop_time3 = StopTime {
-            arrival_time: Some("15:00:00".to_owned()),
-            departure_time: Some("16:00:00".to_owned()),
+            arrival_time: time_str_to_int(Some("15:00:00".to_owned())),
+            departure_time: time_str_to_int(Some("16:00:00".to_owned())),
             stop_sequence: Some(ss3),
             stop_id: Some(id3.clone()),
         };
         let stop_time4 = StopTime {
-            arrival_time: Some("22:00:00".to_owned()),
-            departure_time: Some("23:00:00".to_owned()),
+            arrival_time: time_str_to_int(Some("22:00:00".to_owned())),
+            departure_time: time_str_to_int(Some("23:00:00".to_owned())),
             stop_sequence: Some(ss1),
             stop_id: Some(id2.clone()),
         };
