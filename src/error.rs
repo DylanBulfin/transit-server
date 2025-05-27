@@ -1,4 +1,4 @@
-use std::net::AddrParseError;
+use std::{fmt::Display, net::AddrParseError};
 
 use tokio::sync::mpsc::error::SendError;
 use zip::result::ZipError;
@@ -12,9 +12,32 @@ pub enum ScheduleError {
     ReqwestError(reqwest::Error),
     AddrParseError(AddrParseError),
     TransferError(tonic::transport::Error),
+    IOError(std::io::Error),
+    HyperError(hyper::Error),
+    HyperHttpError(hyper::http::Error),
 
     RawError(String),
 }
+
+impl Display for ScheduleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScheduleError::SendError(send_error) => f.write_fmt(format_args!("{}", send_error)),
+            ScheduleError::ZipError(zip_error) => f.write_fmt(format_args!("{}", zip_error)),
+            ScheduleError::ReqwestError(error) => f.write_fmt(format_args!("{}", error)),
+            ScheduleError::AddrParseError(addr_parse_error) => {
+                f.write_fmt(format_args!("{}", addr_parse_error))
+            }
+            ScheduleError::TransferError(error) => f.write_fmt(format_args!("{}", error)),
+            ScheduleError::IOError(error) => f.write_fmt(format_args!("{}", error)),
+            ScheduleError::HyperError(error) => f.write_fmt(format_args!("{}", error)),
+            ScheduleError::HyperHttpError(error) => f.write_fmt(format_args!("{}", error)),
+            ScheduleError::RawError(s) => f.write_str(s),
+        }
+    }
+}
+
+impl std::error::Error for ScheduleError {}
 
 impl From<SendError<ScheduleResponse>> for ScheduleError {
     fn from(value: SendError<ScheduleResponse>) -> Self {
@@ -55,5 +78,23 @@ impl From<String> for ScheduleError {
 impl From<&str> for ScheduleError {
     fn from(value: &str) -> Self {
         Self::RawError(value.to_owned())
+    }
+}
+
+impl From<std::io::Error> for ScheduleError {
+    fn from(value: std::io::Error) -> Self {
+        Self::IOError(value)
+    }
+}
+
+impl From<hyper::Error> for ScheduleError {
+    fn from(value: hyper::Error) -> Self {
+        Self::HyperError(value)
+    }
+}
+
+impl From<hyper::http::Error> for ScheduleError {
+    fn from(value: hyper::http::Error) -> Self {
+        Self::HyperHttpError(value)
     }
 }
