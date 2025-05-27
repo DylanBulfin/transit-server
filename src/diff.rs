@@ -652,7 +652,7 @@ impl From<gtfs_parsing::schedule::stop_times::StopTime> for StopTime {
             ..
         } = value;
         Self {
-            stop_id,
+            stop_id: Some("".to_owned()),
             arrival_time: time_str_to_int(arrival_time),
             departure_time: time_str_to_int(departure_time),
             stop_sequence: Some(stop_sequence),
