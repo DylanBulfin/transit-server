@@ -3,6 +3,7 @@ package db_transit;
 
 service Schedule{
   rpc GetSchedule(ScheduleRequest) returns (ScheduleResponse);
+  rpc GetLastUpdate(LastUpdateRequest) returns (LastUpdateResponse);
 }
 
 message ScheduleRequest {
@@ -90,4 +91,12 @@ message TripStopTimesDiff {
   optional string trip_id = 1;
   repeated StopTime added_stop_times = 2;
   repeated uint32 removed_stop_seq = 3;
+}
+
+message LastUpdateRequest {
+
+}
+
+message LastUpdateResponse {
+  optional uint32 timestamp = 1;
 }

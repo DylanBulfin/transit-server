@@ -15,6 +15,7 @@ pub enum ScheduleError {
     IOError(std::io::Error),
     HyperError(hyper::Error),
     HyperHttpError(hyper::http::Error),
+    HyperLegacyError(hyper_util::client::legacy::Error),
 
     RawError(String),
 }
@@ -32,6 +33,7 @@ impl Display for ScheduleError {
             ScheduleError::IOError(error) => f.write_fmt(format_args!("{}", error)),
             ScheduleError::HyperError(error) => f.write_fmt(format_args!("{}", error)),
             ScheduleError::HyperHttpError(error) => f.write_fmt(format_args!("{}", error)),
+            ScheduleError::HyperLegacyError(error) => f.write_fmt(format_args!("{}", error)),
             ScheduleError::RawError(s) => f.write_str(s),
         }
     }
@@ -96,5 +98,11 @@ impl From<hyper::Error> for ScheduleError {
 impl From<hyper::http::Error> for ScheduleError {
     fn from(value: hyper::http::Error) -> Self {
         Self::HyperHttpError(value)
+    }
+}
+
+impl From<hyper_util::client::legacy::Error> for ScheduleError {
+    fn from(value: hyper_util::client::legacy::Error) -> Self {
+        Self::HyperLegacyError(value)
     }
 }

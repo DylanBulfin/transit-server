@@ -4,7 +4,8 @@ use chrono::{DateTime, Utc};
 use chrono_tz::{America::New_York, Tz};
 
 use db_transit::{
-    FullSchedule, ScheduleDiff, ScheduleRequest, ScheduleResponse, schedule_server::Schedule,
+    FullSchedule, LastUpdateRequest, LastUpdateResponse, ScheduleDiff, ScheduleRequest,
+    ScheduleResponse, schedule_server::Schedule,
 };
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
@@ -23,6 +24,8 @@ pub static FULL_LOCK: RwLock<Option<FullSchedule>> = RwLock::const_new(None);
 // Holds history of diffs, indexed by applicable timestamp
 pub static DIFFS_LOCK: LazyLock<RwLock<HashMap<u32, ScheduleDiff>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
+
+// pub static LAST_UPDATE_LOCK: RwLock<u32> = RwLock::const_new(0);
 
 #[derive(Debug, Default)]
 pub struct ScheduleService {}
@@ -63,5 +66,14 @@ impl Schedule for ScheduleService {
         } else {
             Err(Status::new(tonic::Code::Internal, "Unable to find data"))
         }
+    }
+
+    async fn get_last_update(
+        &self,
+        _request: Request<LastUpdateRequest>,
+    ) -> Result<Response<LastUpdateResponse>, Status> {
+        let timestamp: Option<u32> = HISTORY_LOCK.read().await.last().map(|(ts, _)| *ts);
+
+        Ok(Response::new(LastUpdateResponse { timestamp }))
     }
 }
