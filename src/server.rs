@@ -142,13 +142,10 @@ async fn verify_global_state() {
 
     for (timestamp, diff) in DIFFS_LOCK.read().await.iter() {
         println!(
-            "Timestamp {} contains {} route diffs, and a total of {} trip diffs",
+            "Timestamp {} contains {} added trips and {} removed trips",
             timestamp,
-            diff.route_diffs.len(),
-            diff.route_diffs
-                .iter()
-                .flat_map(|d| d.trip_diffs.iter())
-                .count()
+            diff.added_trips.len(),
+            diff.removed_trip_ids.len()
         );
     }
 }
