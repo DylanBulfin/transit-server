@@ -134,6 +134,7 @@ async fn serve_schedule(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BodyType>, ScheduleError> {
     check_cache_validity().await;
+    println!("New request for URI {:?}", req.uri());
 
     let req_headers = req.headers().clone();
     let (req_body, _) = decode_body(req.into_body()).await?;
