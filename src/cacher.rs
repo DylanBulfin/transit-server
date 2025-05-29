@@ -22,6 +22,7 @@ use transit_server::{
 };
 
 const GRPC_BASE_URL: &'static str = "http://localhost:50052";
+const GRPC_URL_PATH: &'static str = "/db_transit.Schedule/GetSchedule";
 const GRPC_FULL_URL: &'static str = "http://localhost:50052/db_transit.Schedule/GetSchedule";
 
 const MAX_CACHE_ENTRIES: u32 = 20;
@@ -133,8 +134,12 @@ async fn add_cached_value(key: Vec<u8>, bvec: Vec<u8>, headers: HeaderMap, trail
 async fn serve_schedule(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BodyType>, ScheduleError> {
+    if req.uri().path() != GRPC_URL_PATH {
+        println!("Rejecting request to endpoint: {:?}", req.uri().path());
+        return Err(format!("Endpoint not supported: {:?}", req.uri().path()).into());
+    }
+
     check_cache_validity().await;
-    println!("New request for URI {:?}", req.uri());
 
     let req_headers = req.headers().clone();
     let (req_body, _) = decode_body(req.into_body()).await?;
