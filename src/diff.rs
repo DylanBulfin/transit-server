@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     hash::Hash,
 };
 
@@ -431,6 +431,19 @@ pub struct ScheduleUpdate {
     pub removed_stop_ids: HashSet<String>,
 }
 
+impl Default for ScheduleUpdate {
+    fn default() -> Self {
+        Self {
+            added_trips: HashMap::new(),
+            added_shapes: HashMap::new(),
+            added_stops: HashMap::new(),
+            removed_trip_ids: HashSet::new(),
+            removed_stop_ids: HashSet::new(),
+            removed_shape_ids: HashSet::new(),
+        }
+    }
+}
+
 impl From<ScheduleUpdate> for ScheduleDiff {
     fn from(value: ScheduleUpdate) -> Self {
         let ScheduleUpdate {
@@ -480,17 +493,15 @@ fn get_diff_diff_mask(r1: bool, r2: bool, a1: bool, a2: bool) -> (bool, Option<b
         | (true, false, false, true)
         | (false, true, false, true) => (true, Some(true)),
         (true, false, true, false) => (true, Some(false)),
-        (true, true, true, false)
-        | (false, true, true, false)
-        | (true, false, false, false)
-        | (false, true, false, false) => (true, None),
+        (true, true, true, false) | (true, false, false, false) | (false, true, false, false) => {
+            (true, None)
+        }
         (false, false, true, false) => (false, Some(false)),
         (false, false, false, true) => (false, Some(true)),
-        (false, false, false, false) => (false, None),
+        (false, false, false, false) | (false, true, true, false) => (false, None),
         (true, false, true, true) | (true, true, false, false) | (false, false, true, true) => {
             panic!("Unexpected situation with diffs")
         }
-        a => panic!("Unexpected diff mask: {:?}", a),
     }
 }
 
@@ -519,7 +530,7 @@ where
 }
 
 impl ScheduleUpdate {
-    fn combine(&self, other: &ScheduleUpdate) -> Self {
+    pub fn combine(&self, other: &ScheduleUpdate) -> Self {
         let ScheduleUpdate {
             removed_shape_ids,
             removed_stop_ids,
@@ -736,17 +747,14 @@ fn time_str_to_int(time: Option<String>) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use chrono::NaiveDate;
     use gtfs_parsing::schedule::Schedule;
 
-    use crate::{
-        diff::time_str_to_int,
-        shared::db_transit::{FullSchedule, Position, Shape, Stop, StopTime},
-    };
+    use crate::shared::db_transit::{FullSchedule, Position, Shape, Stop};
 
-    use super::{RouteIR, ScheduleIR, TripIR};
+    use super::{RouteIR, ScheduleIR, ScheduleUpdate, TripIR};
 
     macro_rules! setup_new_schedule {
         ($dir:expr, $bounds:expr) => {{
@@ -1117,20 +1125,6 @@ mod tests {
         assert_eq!(diff2.removed_shape_ids.len(), 0);
     }
 
-    fn test_id_diff(schedule1: ScheduleIR, schedule2: ScheduleIR) {
-        let diff1 = schedule1.get_diff(&schedule2);
-        let diff2 = schedule2.get_diff(&schedule1);
-
-        let diff_diff = diff1.combine(&diff2);
-
-        assert_eq!(diff_diff.removed_stop_ids.len(), 0);
-        assert_eq!(diff_diff.removed_shape_ids.len(), 0);
-        assert_eq!(diff_diff.removed_trip_ids.len(), 0);
-        assert_eq!(diff_diff.added_stops.len(), 0);
-        assert_eq!(diff_diff.added_trips.len(), 0);
-        assert_eq!(diff_diff.added_shapes.len(), 0);
-    }
-
     fn test_id_ne(schedule: ScheduleIR) {
         let mut schedule2 = schedule.clone();
 
@@ -1281,10 +1275,158 @@ mod tests {
         test_schedule_ir(schedule.clone(), schedule_abbrev);
         test_from_ir(schedule_ir.clone());
         test_id(schedule_ir.clone());
-        test_id_diff(schedule_ir.clone(), schedule_ir2.clone());
         test_id_ne(schedule_ir.clone());
         test_diff_full(schedule_ir, schedule_ir2);
 
         test_ranges(schedule);
+    }
+
+    #[test]
+    fn test_combine() {
+        let shape_id1: String = "ShapeId1".to_owned();
+        let shape_id2: String = "ShapeId2".to_owned();
+        let shape_id3: String = "ShapeId3".to_owned();
+
+        let stop_id1: String = "StopId1".to_owned();
+        let stop_id2: String = "StopId2".to_owned();
+        let stop_id3: String = "StopId3".to_owned();
+
+        let trip_id1: String = "TripId1".to_owned();
+        let trip_id2: String = "TripId2".to_owned();
+        let trip_id3: String = "TripId3".to_owned();
+
+        let route_id1: String = "RouteId1".to_owned();
+        let route_id2: String = "RouteId2".to_owned();
+        let route_id3: String = "RouteId3".to_owned();
+
+        let date_str: String = "20250401".to_owned();
+
+        let test_shape1: Shape = Shape {
+            shape_id: Some(shape_id1.clone()),
+            points: vec![],
+        };
+        let test_shape2: Shape = Shape {
+            shape_id: Some(shape_id2.clone()),
+            points: vec![],
+        };
+        let test_shape3: Shape = Shape {
+            shape_id: Some(shape_id3.clone()),
+            points: vec![],
+        };
+
+        let test_stop2: Stop = Stop {
+            stop_id: Some(stop_id2.clone()),
+            stop_name: None,
+            transfers_from: vec![],
+            position: None,
+            parent_stop_id: None,
+            route_ids: vec![],
+        };
+        let test_stop3: Stop = Stop {
+            stop_id: Some(stop_id3.clone()),
+            stop_name: None,
+            transfers_from: vec![],
+            position: None,
+            parent_stop_id: None,
+            route_ids: vec![],
+        };
+
+        let test_trip1: TripIR = TripIR {
+            trip_id: trip_id1.clone(),
+            shape_id: None,
+            stop_times: HashMap::new(),
+            mask_start_date: date_str.clone(),
+            date_mask: 1,
+            headsign: None,
+            direction: None,
+        };
+        let test_trip2: TripIR = TripIR {
+            trip_id: trip_id2.clone(),
+            shape_id: None,
+            stop_times: HashMap::new(),
+            mask_start_date: date_str.clone(),
+            date_mask: 1,
+            headsign: None,
+            direction: None,
+        };
+        let test_trip3: TripIR = TripIR {
+            trip_id: trip_id3.clone(),
+            shape_id: None,
+            stop_times: HashMap::new(),
+            mask_start_date: date_str.clone(),
+            date_mask: 1,
+            headsign: None,
+            direction: None,
+        };
+
+        let diff1 = ScheduleUpdate {
+            removed_stop_ids: HashSet::from_iter(vec![stop_id1.clone()].into_iter()),
+            removed_shape_ids: HashSet::from_iter(vec![].into_iter()),
+            removed_trip_ids: HashSet::from_iter(
+                vec![(route_id1.clone(), trip_id1.clone())].into_iter(),
+            ),
+            added_stops: HashMap::from_iter(vec![(stop_id2.clone(), test_stop2)].into_iter()),
+            added_shapes: HashMap::from_iter(vec![
+                (shape_id2.clone(), test_shape2),
+                (shape_id1.clone(), test_shape1),
+            ]),
+            added_trips: HashMap::from_iter(vec![
+                ((route_id2.clone(), trip_id2.clone()), test_trip2.clone()),
+                ((route_id1.clone(), trip_id1.clone()), test_trip1.clone()),
+            ]),
+        };
+        let diff2 = ScheduleUpdate {
+            removed_stop_ids: HashSet::from_iter(vec![stop_id2.clone()].into_iter()),
+            removed_shape_ids: HashSet::from_iter(vec![shape_id2.clone()].into_iter()),
+            removed_trip_ids: HashSet::from_iter(
+                vec![(route_id2.clone(), trip_id2.clone())].into_iter(),
+            ),
+            added_stops: HashMap::from_iter(
+                vec![(stop_id3.clone(), test_stop3.clone())].into_iter(),
+            ),
+            added_shapes: HashMap::from_iter(vec![(shape_id3.clone(), test_shape3.clone())]),
+            added_trips: HashMap::from_iter(vec![
+                ((route_id3.clone(), trip_id3.clone()), test_trip3.clone()),
+                ((route_id2.clone(), trip_id2.clone()), test_trip2.clone()),
+            ]),
+        };
+
+        let combo = diff1.combine(&diff2);
+
+        assert_eq!(
+            combo.removed_stop_ids,
+            HashSet::from_iter(vec![stop_id1].into_iter())
+        );
+        assert_eq!(
+            combo.removed_shape_ids,
+            HashSet::from_iter(vec![].into_iter())
+        );
+        assert_eq!(
+            combo.removed_trip_ids,
+            HashSet::from_iter(
+                vec![
+                    (route_id1.clone(), trip_id1.clone()),
+                    (route_id2.clone(), trip_id2.clone())
+                ]
+                .into_iter()
+            )
+        );
+
+        assert_eq!(
+            combo.added_stops,
+            HashMap::from_iter(vec![(stop_id3.clone(), test_stop3.clone())])
+        );
+        assert_eq!(
+            combo.added_shapes,
+            HashMap::from_iter(vec![(shape_id3.clone(), test_shape3.clone())])
+        );
+        assert_eq!(
+            combo.added_trips,
+            HashMap::from_iter(vec![
+                ((route_id1.clone(), trip_id1.clone()), test_trip1.clone()),
+                ((route_id2.clone(), trip_id2.clone()), test_trip2.clone()),
+                ((route_id3.clone(), trip_id3.clone()), test_trip3.clone()),
+            ])
+        );
     }
 }

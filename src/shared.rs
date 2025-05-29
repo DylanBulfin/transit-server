@@ -10,14 +10,15 @@ use db_transit::{
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 
-use crate::diff::ScheduleIR;
+use crate::diff::{ScheduleIR, ScheduleUpdate};
 
 pub mod db_transit {
     tonic::include_proto!("db_transit"); // The string specified here must match the proto package name
 }
 
 // Holds the history of full schedule states for current day
-pub static HISTORY_LOCK: RwLock<Vec<(u32, ScheduleIR)>> = RwLock::const_new(Vec::new());
+pub static HISTORY_LOCK: RwLock<Vec<(u32, (ScheduleIR, ScheduleUpdate))>> =
+    RwLock::const_new(Vec::new());
 
 // Holds the full state of the schedule in GRPC format
 pub static FULL_LOCK: RwLock<Option<FullSchedule>> = RwLock::const_new(None);

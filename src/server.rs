@@ -10,7 +10,7 @@ use gtfs_parsing::schedule::Schedule;
 use tokio::time::sleep;
 use tonic::{codec::CompressionEncoding, transport::Server};
 
-use transit_server::diff::ScheduleIR;
+use transit_server::diff::{ScheduleIR, ScheduleUpdate};
 use transit_server::shared::db_transit::FullSchedule;
 use transit_server::shared::{DIFFS_LOCK, FULL_LOCK, HISTORY_LOCK, get_nyc_datetime};
 use transit_server::{
@@ -94,25 +94,39 @@ async fn update_global_state(schedule: ScheduleIR) {
             diffs_locked.remove(&ts);
         }
 
-        history_locked.push((timestamp as u32, schedule.clone().into()));
+        let prev_diff: ScheduleUpdate = schedule.get_diff(
+            history_locked
+                .last()
+                .map(|(_, (ir, _))| ir)
+                .unwrap_or(&schedule),
+        );
+
+        history_locked.push((
+            timestamp as u32,
+            (schedule.clone().into(), ScheduleUpdate::default()),
+        ));
 
         let full_schedule: FullSchedule = schedule.clone().into();
-
-        // let mut encoder = GzEncoder::new(
-        //     Cursor::new(full_schedule.encode_to_vec()),
-        //     Compression::default(),
-        // );
-        //
-        // let mut bytes: Vec<u8> = Vec::new();
-        // if let Err(e) = encoder.read_to_end(&mut bytes) {
-        //     println!("Encountered error while compressing output: {}", e);
-        // }
 
         *(FULL_LOCK.write().await) = Some(full_schedule);
 
         let mut diffs_map = HashMap::new();
-        for (p_timestamp, p_schedule) in history_locked.iter() {
+        for (p_timestamp, (p_schedule, p_update)) in history_locked.iter_mut() {
+            // This is the diff from directly comparing the current schedule to the previous
+            let update = schedule.get_diff(p_schedule);
+            // Alternative way of getting to the same state (ideally)
+            let alt_update = p_update.combine(&prev_diff);
+
+            let alt_schedule = p_schedule.clone();
+            let alt_schedule = alt_update.apply_to_schedule(alt_schedule);
+
+            if alt_schedule != schedule {
+                println!("Mismatched diff combining values, check code");
+            }
+
             diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
+
+            *p_update = update;
         }
 
         *diffs_locked = diffs_map;
