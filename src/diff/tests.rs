@@ -99,14 +99,14 @@ fn test_shape_diffs() {
     );
 
     let ir1 = ScheduleIR {
-        routes: nm(),
-        stops: nm(),
-        shapes: shapes1,
+        routes: nm().into(),
+        stops: nm().into(),
+        shapes: shapes1.into(),
     };
     let ir2 = ScheduleIR {
-        routes: nm(),
-        stops: nm(),
-        shapes: shapes2,
+        routes: nm().into(),
+        stops: nm().into(),
+        shapes: shapes2.into(),
     };
 
     let (added_shapes, removed_shape_ids) = ir2.get_shape_diffs(&ir1);
@@ -189,14 +189,14 @@ fn test_stop_diffs() {
     stops2.insert(id1.clone(), stop4.clone());
 
     let ir1 = ScheduleIR {
-        routes: nm(),
-        shapes: nm(),
-        stops: stops1,
+        routes: nm().into(),
+        shapes: nm().into(),
+        stops: stops1.into(),
     };
     let ir2 = ScheduleIR {
-        routes: nm(),
-        shapes: nm(),
-        stops: stops2,
+        routes: nm().into(),
+        shapes: nm().into(),
+        stops: stops2.into(),
     };
 
     let (added_stops, removed_stop_ids) = ir2.get_stop_diffs(&ir1);
@@ -386,7 +386,7 @@ fn test_id_ne(schedule: ScheduleIR) {
         "Test Trip".to_owned(),
         TripIR {
             trip_id: "Test Trip".to_owned(),
-            stop_times: HashMap::new(),
+            stop_times: HashMap::new().into(),
             headsign: None,
             shape_id: None,
             direction: None,
@@ -489,12 +489,12 @@ fn test_ranges(schedule: Schedule) {
         32,
     );
 
-    for RouteIR { trips, .. } in routes.into_values() {
+    for RouteIR { trips, .. } in routes.into_inner().into_values() {
         for TripIR {
             date_mask,
             mask_start_date,
             ..
-        } in trips.into_values()
+        } in trips.into_inner().into_values()
         {
             assert_eq!(mask_start_date, "20250401");
             assert_ne!(date_mask, 0);
@@ -586,7 +586,7 @@ fn test_combine() {
     let test_trip1: TripIR = TripIR {
         trip_id: trip_id1.clone(),
         shape_id: None,
-        stop_times: HashMap::new(),
+        stop_times: HashMap::new().into(),
         mask_start_date: date_str.clone(),
         date_mask: 1,
         headsign: None,
@@ -595,7 +595,7 @@ fn test_combine() {
     let test_trip2: TripIR = TripIR {
         trip_id: trip_id2.clone(),
         shape_id: None,
-        stop_times: HashMap::new(),
+        stop_times: HashMap::new().into(),
         mask_start_date: date_str.clone(),
         date_mask: 1,
         headsign: None,
@@ -604,7 +604,7 @@ fn test_combine() {
     let test_trip3: TripIR = TripIR {
         trip_id: trip_id3.clone(),
         shape_id: None,
-        stop_times: HashMap::new(),
+        stop_times: HashMap::new().into(),
         mask_start_date: date_str.clone(),
         date_mask: 1,
         headsign: None,

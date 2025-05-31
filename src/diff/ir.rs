@@ -8,19 +8,58 @@ use crate::shared::{
     get_nyc_datetime,
 };
 
+macro_rules! make_collection_wrapper_type {
+    ($id:ident, $ty:ty $(; $tt:tt)?) => {
+        #[derive(Debug, Clone, PartialEq $(, $tt)?)]
+        pub struct $id($ty);
+
+        impl std::ops::Deref for $id {
+            type Target = $ty;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for $id {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+
+        impl From<$ty> for $id {
+            fn from(value: $ty) -> Self {
+                Self(value)
+            }
+        }
+
+        impl $id {
+            pub fn into_inner(self) -> $ty {
+                self.0
+            }
+        }
+    };
+}
+
+make_collection_wrapper_type!(RouteIRs, HashMap<String, RouteIR>);
+make_collection_wrapper_type!(ShapeIRs, HashMap<String, Shape>);
+make_collection_wrapper_type!(StopIRs, HashMap<String, Stop>);
+
 // Create intermediate representations that use HashMap instead of Vec
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScheduleIR {
-    pub routes: HashMap<String, RouteIR>,
-    pub shapes: HashMap<String, Shape>,
-    pub stops: HashMap<String, Stop>,
+    pub routes: RouteIRs,
+    pub shapes: ShapeIRs,
+    pub stops: StopIRs,
 }
+
+make_collection_wrapper_type!(TripIRs, HashMap<String, TripIR>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteIR {
     pub route_id: String,
 
-    pub trips: HashMap<String, TripIR>,
+    pub trips: TripIRs,
 }
 
 impl From<RouteIR> for Route {
@@ -29,15 +68,17 @@ impl From<RouteIR> for Route {
 
         Self {
             route_id: Some(route_id),
-            trips: trips.into_values().map(TripIR::into).collect(),
+            trips: trips.into_inner().into_values().map(TripIR::into).collect(),
         }
     }
 }
 
+make_collection_wrapper_type!(StopTimeIRs, HashMap<u32, StopTime>);
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TripIR {
     pub trip_id: String,
-    pub stop_times: HashMap<u32, StopTime>, // Keyed by stop sequence for convenience
+    pub stop_times: StopTimeIRs,
 
     pub headsign: Option<String>,
     pub shape_id: Option<String>,
@@ -61,7 +102,7 @@ impl From<TripIR> for Trip {
 
         Self {
             trip_id: Some(trip_id),
-            stop_times: stop_times.into_values().collect(),
+            stop_times: stop_times.into_inner().into_values().collect(),
             headsign,
             shape_id,
             direction,
@@ -92,13 +133,13 @@ impl ScheduleIR {
             agencies: _, // Slightly more explicit than ..
         } = value;
 
-        let mut routes = HashMap::new();
+        let mut routes = RouteIRs(HashMap::new());
         for route_id in s_routes.into_keys() {
             routes.insert(
                 route_id.clone(),
                 RouteIR {
                     route_id,
-                    trips: HashMap::default(),
+                    trips: TripIRs(HashMap::default()),
                 },
             );
         }
@@ -163,12 +204,14 @@ impl ScheduleIR {
                 continue;
             }
 
-            let stop_times = s_stop_times
-                .remove(&trip_id)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect();
+            let stop_times = StopTimeIRs(
+                s_stop_times
+                    .remove(&trip_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into()))
+                    .collect(),
+            );
 
             let trip = TripIR {
                 trip_id: trip_id.clone(),
@@ -185,73 +228,77 @@ impl ScheduleIR {
             }
         }
 
-        let shapes: HashMap<String, Shape> = s_shapes
-            .into_iter()
-            .map(|(k, shape)| {
-                let gtfs_parsing::schedule::shapes::Shape { shape_id, points } = shape;
-                (
-                    k,
-                    Shape {
-                        shape_id: Some(shape_id),
-                        points: points
-                            .into_iter()
-                            .map(|p| Position {
-                                lat: Some(p.shape_pt_lat),
-                                lon: Some(p.shape_pt_lon),
-                            })
-                            .collect(),
-                    },
-                )
-            })
-            .collect();
-
-        let stops: HashMap<String, Stop> = s_stops
-            .into_iter()
-            .map(|(k, stop)| {
-                let gtfs_parsing::schedule::stops::Stop {
-                    stop_id,
-                    stop_lat,
-                    stop_lon,
-                    stop_name,
-                    parent_station,
-                    ..
-                } = stop;
-
-                let transfers_from = s_transfers
-                    .remove(&stop_id)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|t| Transfer {
-                        from_stop_id: t.from_stop_id,
-                        to_stop_id: t.to_stop_id,
-                        min_transfer_time: t.min_transfer_time,
-                    })
-                    .collect();
-
-                (
-                    k,
-                    Stop {
-                        stop_id: Some(stop_id),
-                        stop_name,
-                        parent_stop_id: parent_station,
-                        transfers_from,
-                        route_ids: Vec::new(), // TODO calculate this
-                        position: if let (Some(lat), Some(lon)) = (stop_lat, stop_lon) {
-                            if let (Ok(lat), Ok(lon)) = (lat.parse(), lon.parse()) {
-                                Some(Position {
-                                    lat: Some(lat),
-                                    lon: Some(lon),
+        let shapes: ShapeIRs = ShapeIRs(
+            s_shapes
+                .into_iter()
+                .map(|(k, shape)| {
+                    let gtfs_parsing::schedule::shapes::Shape { shape_id, points } = shape;
+                    (
+                        k,
+                        Shape {
+                            shape_id: Some(shape_id),
+                            points: points
+                                .into_iter()
+                                .map(|p| Position {
+                                    lat: Some(p.shape_pt_lat),
+                                    lon: Some(p.shape_pt_lon),
                                 })
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+        );
+
+        let stops: StopIRs = StopIRs(
+            s_stops
+                .into_iter()
+                .map(|(k, stop)| {
+                    let gtfs_parsing::schedule::stops::Stop {
+                        stop_id,
+                        stop_lat,
+                        stop_lon,
+                        stop_name,
+                        parent_station,
+                        ..
+                    } = stop;
+
+                    let transfers_from = s_transfers
+                        .remove(&stop_id)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|t| Transfer {
+                            from_stop_id: t.from_stop_id,
+                            to_stop_id: t.to_stop_id,
+                            min_transfer_time: t.min_transfer_time,
+                        })
+                        .collect();
+
+                    (
+                        k,
+                        Stop {
+                            stop_id: Some(stop_id),
+                            stop_name,
+                            parent_stop_id: parent_station,
+                            transfers_from,
+                            route_ids: Vec::new(), // TODO calculate this
+                            position: if let (Some(lat), Some(lon)) = (stop_lat, stop_lon) {
+                                if let (Ok(lat), Ok(lon)) = (lat.parse(), lon.parse()) {
+                                    Some(Position {
+                                        lat: Some(lat),
+                                        lon: Some(lon),
+                                    })
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
-                            }
-                        } else {
-                            None
+                            },
                         },
-                    },
-                )
-            })
-            .collect();
+                    )
+                })
+                .collect(),
+        );
 
         Self {
             routes,
@@ -277,9 +324,13 @@ impl From<ScheduleIR> for FullSchedule {
         } = value;
 
         Self {
-            routes: routes.into_values().map(RouteIR::into).collect(),
-            shapes: shapes.into_values().collect(),
-            stops: stops.into_values().collect(),
+            routes: routes
+                .into_inner()
+                .into_values()
+                .map(RouteIR::into)
+                .collect(),
+            shapes: shapes.into_inner().into_values().collect(),
+            stops: stops.into_inner().into_values().collect(),
         }
     }
 }
