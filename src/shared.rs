@@ -10,7 +10,7 @@ use db_transit::{
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 
-use crate::diff::{ScheduleIR, ScheduleUpdate};
+use crate::diff::{core::ScheduleUpdate, ir::ScheduleIR};
 
 pub mod db_transit {
     tonic::include_proto!("db_transit"); // The string specified here must match the proto package name

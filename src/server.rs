@@ -10,7 +10,8 @@ use gtfs_parsing::schedule::Schedule;
 use tokio::time::sleep;
 use tonic::{codec::CompressionEncoding, transport::Server};
 
-use transit_server::diff::{ScheduleIR, ScheduleUpdate};
+use transit_server::diff::core::ScheduleUpdate;
+use transit_server::diff::ir::ScheduleIR;
 use transit_server::shared::db_transit::FullSchedule;
 use transit_server::shared::{DIFFS_LOCK, FULL_LOCK, HISTORY_LOCK, get_nyc_datetime};
 use transit_server::{
