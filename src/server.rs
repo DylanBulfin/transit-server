@@ -249,18 +249,20 @@ async fn main() -> Result<(), ScheduleError> {
         .await;
         let server = tokio::spawn(async move { server_loop().await.unwrap_or_default() });
         let updater = tokio::spawn(async move { update_loop().await.unwrap_or_default() });
+        let logger = tokio::spawn(async move { logger_loop().await });
 
         // Check that both are still running
-        while !server.is_finished() && !updater.is_finished() {
+        while !server.is_finished() && !updater.is_finished() && !logger.is_finished() {
             sleep(Duration::new(5, 0)).await;
         }
 
         // If either crashes we just restart from scratch, abort them
         server.abort();
         updater.abort();
+        logger.abort();
 
         // Wait for them to actually shutdown to restart
-        while !server.is_finished() || !updater.is_finished() {
+        while !server.is_finished() || !updater.is_finished() || !logger.is_finished() {
             sleep(Duration::new(1, 0)).await;
         }
     }

@@ -191,6 +191,8 @@ async fn main() -> Result<(), ScheduleError> {
     // We create a TcpListener and bind it to [::1]:50051
     let listener = TcpListener::bind(addr).await?;
 
+    let mut logger = tokio::task::spawn(async move { logger_loop().await });
+
     // We start a loop to continuously accept incoming connections
     loop {
         let (stream, _) = listener.accept().await?;
@@ -210,5 +212,9 @@ async fn main() -> Result<(), ScheduleError> {
                 error(format!("Error serving connection: {}", err)).await;
             }
         });
+
+        if logger.is_finished() {
+            logger = tokio::task::spawn(async move { logger_loop().await });
+        }
     }
 }
