@@ -10,6 +10,7 @@ use gtfs_parsing::schedule::Schedule;
 use tokio::time::sleep;
 use tonic::{codec::CompressionEncoding, transport::Server};
 
+use transit_server::create_logger;
 use transit_server::diff::core::ScheduleUpdate;
 use transit_server::diff::ir::ScheduleIR;
 use transit_server::shared::db_transit::FullSchedule;
@@ -19,6 +20,8 @@ use transit_server::{
     shared::{ScheduleService, db_transit::schedule_server::ScheduleServer},
 };
 use zip::ZipArchive;
+
+create_logger!("./server.log");
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
 const MAX_HISTORY_LEN: usize = 10;
@@ -81,7 +84,7 @@ async fn get_update(
 async fn update_global_state(schedule: ScheduleIR) {
     let time = get_nyc_datetime();
 
-    println!("{}: Starting global state update", time.time());
+    info(format!("{}: Starting global state update", time.time())).await;
 
     let timestamp = time.timestamp();
 
@@ -122,7 +125,7 @@ async fn update_global_state(schedule: ScheduleIR) {
             let alt_schedule = alt_update.apply_to_schedule(alt_schedule);
 
             if alt_schedule != schedule {
-                println!("Mismatched diff combining values, check code");
+                error(format!("Mismatched diff combining values, check code")).await;
             }
 
             diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
@@ -135,14 +138,15 @@ async fn update_global_state(schedule: ScheduleIR) {
 
     verify_global_state().await;
 
-    println!("{}: Finished global state update", time.time());
+    info(format!("{}: Finished global state update", time.time())).await;
 }
 
 async fn verify_global_state() {
-    println!(
+    info(format!(
         "Global state contains {} diffs",
         HISTORY_LOCK.read().await.len()
-    );
+    ))
+    .await;
 
     assert_eq!(
         HISTORY_LOCK.read().await.len(),
@@ -156,12 +160,13 @@ async fn verify_global_state() {
     assert_eq!(h_times, d_times);
 
     for (timestamp, diff) in DIFFS_LOCK.read().await.iter() {
-        println!(
+        info(format!(
             "Timestamp {} contains {} added trips and {} removed trips",
             timestamp,
             diff.added_trips.len(),
             diff.removed_trip_ids.len()
-        );
+        ))
+        .await;
     }
 }
 
@@ -180,19 +185,22 @@ async fn update_loop() -> Result<(), ScheduleError> {
         if get_nyc_datetime() >= next_update {
             match get_update(Some(curr_hash), Some(&curr_schedule)).await? {
                 (Some(new_schedule), Some(new_hash)) => {
-                    println!("Found new update at {}", get_nyc_datetime().time());
+                    info(format!("Found new update at {}", get_nyc_datetime().time(),)).await;
                     (curr_schedule, curr_hash) = (new_schedule, new_hash);
                     // TODO fix the logic on entering new day
                     update_global_state(curr_schedule.clone()).await;
                 }
                 (None, Some(new_hash)) => {
-                    println!(
+                    info(format!(
                         "Found immaterial new update at {}",
                         get_nyc_datetime().time()
-                    );
+                    ))
+                    .await;
                     curr_hash = new_hash;
                 }
-                (None, None) => println!("No new update at {}", get_nyc_datetime().time()),
+                (None, None) => {
+                    info(format!("No new update at {}", get_nyc_datetime().time(),)).await
+                }
                 u => panic!("Unexpected result: {:?}", u),
             }
 
@@ -204,16 +212,17 @@ async fn update_loop() -> Result<(), ScheduleError> {
 }
 
 async fn server_loop() -> Result<(), ScheduleError> {
-    println!("Server waiting for initial schedule");
+    info(format!("Server waiting for initial schedule")).await;
     // Try to get initial schedule
     while let None = *FULL_LOCK.read().await {
         sleep(Duration::new(1, 0)).await;
     }
 
-    println!(
+    info(format!(
         "Server thread recieved initial schedule at {}",
         Local::now()
-    );
+    ))
+    .await;
 
     let addr = "[::1]:50052".parse()?;
 
@@ -230,11 +239,14 @@ async fn server_loop() -> Result<(), ScheduleError> {
 
 #[tokio::main]
 async fn main() -> Result<(), ScheduleError> {
+    info(format!("Testing {}", 3)).await;
+
     loop {
-        println!(
+        info(format!(
             "Starting new server instance at {}",
             get_nyc_datetime().time()
-        );
+        ))
+        .await;
         let server = tokio::spawn(async move { server_loop().await.unwrap_or_default() });
         let updater = tokio::spawn(async move { update_loop().await.unwrap_or_default() });
 

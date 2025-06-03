@@ -17,6 +17,7 @@ use hyper_util::{
 use tokio::{net::TcpListener, sync::RwLock};
 use tonic::transport::Channel;
 use transit_server::{
+    create_logger,
     error::ScheduleError,
     shared::db_transit::{LastUpdateRequest, schedule_client::ScheduleClient},
 };
@@ -40,6 +41,8 @@ static CACHED_SCHEDULE: LazyLock<RwLock<HashMap<Vec<u8>, (Vec<u8>, HeaderMap, He
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 type BodyType = WithTrailers<Full<Bytes>, Ready<Option<Result<HeaderMap, Infallible>>>>;
+
+create_logger!("./cacher.log");
 
 async fn check_cache_validity() {
     // Send request
@@ -80,7 +83,7 @@ async fn check_cache_validity() {
     }
 
     if clearing {
-        println!("Found an issue, clearing cache");
+        warn(format!("Found an issue, clearing cache")).await;
         CACHED_SCHEDULE.write().await.clear();
     }
 }
@@ -119,12 +122,12 @@ fn form_response(bvec: &Vec<u8>, headers: HeaderMap, trailers: HeaderMap) -> Res
 }
 
 async fn add_cached_value(key: Vec<u8>, bvec: Vec<u8>, headers: HeaderMap, trailers: HeaderMap) {
-    println!("Adding new request to cache");
+    info(format!("Adding new request to cache")).await;
 
     let mut cache = CACHED_SCHEDULE.write().await;
 
     if cache.len() >= MAX_CACHE_ENTRIES as usize {
-        println!("Cache is full, refusing to add another entry");
+        warn(format!("Cache is full, refusing to add another entry")).await;
         return;
     }
 
@@ -135,7 +138,11 @@ async fn serve_schedule(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BodyType>, ScheduleError> {
     if req.uri().path() != GRPC_URL_PATH {
-        println!("Rejecting request to endpoint: {:?}", req.uri().path());
+        warn(format!(
+            "Rejecting request to endpoint: {:?}",
+            req.uri().path()
+        ))
+        .await;
         return Err(format!("Endpoint not supported: {:?}", req.uri().path()).into());
     }
 
@@ -145,7 +152,7 @@ async fn serve_schedule(
     let (req_body, _) = decode_body(req.into_body()).await?;
 
     if let Some((bvec, headers, trailers)) = CACHED_SCHEDULE.read().await.get(&req_body) {
-        println!("Cache hit found");
+        info(format!("Cache hit found")).await;
 
         Ok(form_response(bvec, headers.clone(), trailers.clone()))
     } else {
@@ -159,7 +166,7 @@ async fn serve_schedule(
         let upstream_req =
             upstream_req.body(Full::new(Bytes::from_iter(req_body.iter().cloned())))?;
 
-        println!("Forwarding request upstream: {:?}", upstream_req);
+        info(format!("Forwarding request upstream: {:?}", upstream_req)).await;
 
         let upstream_resp = HTTP_CLIENT.request(upstream_req).await?;
 
@@ -200,7 +207,7 @@ async fn main() -> Result<(), ScheduleError> {
                 .serve_connection(io, service_fn(serve_schedule))
                 .await
             {
-                eprintln!("Error serving connection: {}", err);
+                error(format!("Error serving connection: {}", err)).await;
             }
         });
     }

@@ -26,8 +26,6 @@ pub static FULL_LOCK: RwLock<Option<FullSchedule>> = RwLock::const_new(None);
 pub static DIFFS_LOCK: LazyLock<RwLock<HashMap<u32, ScheduleDiff>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-// pub static LAST_UPDATE_LOCK: RwLock<u32> = RwLock::const_new(0);
-
 #[derive(Debug, Default)]
 pub struct ScheduleService {}
 

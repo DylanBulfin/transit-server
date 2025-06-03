@@ -5,6 +5,7 @@ use tonic::codec::{BufferSettings, Codec, ProstCodec};
 
 pub mod diff;
 pub mod error;
+pub mod log;
 pub mod shared;
 
 pub struct LargeBufferCodec<T, U>(PhantomData<(T, U)>);
