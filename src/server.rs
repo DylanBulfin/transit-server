@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::io::Cursor;
 use std::time::Duration;
 
@@ -238,32 +239,36 @@ async fn server_loop() -> Result<(), ScheduleError> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), ScheduleError> {
-    info(format!("Testing {}", 3)).await;
-
+async fn main() {
     loop {
-        info(format!(
-            "Starting new server instance at {}",
-            get_nyc_datetime().time()
-        ))
-        .await;
-        let server = tokio::spawn(async move { server_loop().await.unwrap_or_default() });
-        let updater = tokio::spawn(async move { update_loop().await.unwrap_or_default() });
-        let logger = tokio::spawn(async move { logger_loop().await });
+        info(format!("Starting new server instance")).await;
 
-        // Check that both are still running
-        while !server.is_finished() && !updater.is_finished() && !logger.is_finished() {
-            sleep(Duration::new(5, 0)).await;
-        }
+        let (comp, err) = tokio::select! {
+            server = server_loop() => ("Server", server),
+            updater = update_loop() => ("Updater", updater),
+            logger = logger_loop() => ("Logger", logger),
+        };
 
-        // If either crashes we just restart from scratch, abort them
-        server.abort();
-        updater.abort();
-        logger.abort();
+        eprintln!(
+            "{} thread failed at {}: {:?}",
+            comp,
+            get_nyc_datetime().time(),
+            err
+        );
 
-        // Wait for them to actually shutdown to restart
-        while !server.is_finished() || !updater.is_finished() || !logger.is_finished() {
-            sleep(Duration::new(1, 0)).await;
+        if let Ok(mut file) = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(LOGGER_FILE)
+        {
+            file.write_fmt(format_args!(
+                "{} thread failed at {}: {:?}",
+                comp,
+                get_nyc_datetime().time(),
+                err
+            ))
+            .unwrap_or_else(|e| eprintln!("Unable to write error to file: {}", e))
         }
     }
 }

@@ -180,8 +180,7 @@ async fn serve_schedule(
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), ScheduleError> {
+async fn cacher_serve_loop() -> Result<(), ScheduleError> {
     let grpc_client = ScheduleClient::connect(GRPC_BASE_URL).await?;
     *(GRPC_CLIENT.write().await) = Some(grpc_client);
 
@@ -190,8 +189,6 @@ async fn main() -> Result<(), ScheduleError> {
 
     // We create a TcpListener and bind it to [::1]:50051
     let listener = TcpListener::bind(addr).await?;
-
-    let mut logger = tokio::task::spawn(async move { logger_loop().await });
 
     // We start a loop to continuously accept incoming connections
     loop {
@@ -212,9 +209,17 @@ async fn main() -> Result<(), ScheduleError> {
                 error(format!("Error serving connection: {}", err)).await;
             }
         });
+    }
+}
 
-        if logger.is_finished() {
-            logger = tokio::task::spawn(async move { logger_loop().await });
-        }
+#[tokio::main]
+async fn main() -> Result<(), ScheduleError> {
+    loop {
+        let (comp, err) = tokio::select! {
+            server = cacher_serve_loop() => ("Cacher", server),
+            logger = logger_loop() => ("Logger", logger)
+        };
+
+        error(format!("{} thread failed: {:?}", comp, err)).await;
     }
 }
