@@ -1,17 +1,16 @@
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io::Cursor;
+use std::io::{Cursor, stdout};
 use std::time::Duration;
 
 use blake3::Hash;
-use chrono::Local;
 use chrono::{DateTime, Days, Timelike};
 use chrono_tz::Tz;
 use gtfs_parsing::schedule::Schedule;
+use logge_rs::{error, info, setup_logger};
 use tokio::time::sleep;
 use tonic::{codec::CompressionEncoding, transport::Server};
 
-use transit_server::create_logger;
 use transit_server::diff::core::ScheduleUpdate;
 use transit_server::diff::ir::ScheduleIR;
 use transit_server::shared::db_transit::FullSchedule;
@@ -22,15 +21,13 @@ use transit_server::{
 };
 use zip::ZipArchive;
 
-create_logger!("./server.log");
-
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
 const MAX_HISTORY_LEN: usize = 10;
 
-fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
-    const INTERVAL_M: u32 = 5;
-    const LAST_VALID: u32 = (60 / INTERVAL_M) - 1;
+const INTERVAL_M: u32 = 5;
+const LAST_VALID: u32 = (60 / INTERVAL_M) - 1;
 
+fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
     let interval = dt.minute() / INTERVAL_M;
 
     if interval == LAST_VALID {
@@ -85,7 +82,7 @@ async fn get_update(
 async fn update_global_state(schedule: ScheduleIR) {
     let time = get_nyc_datetime();
 
-    info(format!("{}: Starting global state update", time.time())).await;
+    info!("Starting global state update");
 
     let timestamp = time.timestamp();
 
@@ -126,7 +123,7 @@ async fn update_global_state(schedule: ScheduleIR) {
             let alt_schedule = alt_update.apply_to_schedule(alt_schedule);
 
             if alt_schedule != schedule {
-                error(format!("Mismatched diff combining values, check code")).await;
+                error!("Mismatched diff combining values, check code");
             }
 
             diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
@@ -139,15 +136,14 @@ async fn update_global_state(schedule: ScheduleIR) {
 
     verify_global_state().await;
 
-    info(format!("{}: Finished global state update", time.time())).await;
+    info!("Finished global state update");
 }
 
 async fn verify_global_state() {
-    info(format!(
+    info!(
         "Global state contains {} diffs",
         HISTORY_LOCK.read().await.len()
-    ))
-    .await;
+    );
 
     assert_eq!(
         HISTORY_LOCK.read().await.len(),
@@ -161,13 +157,12 @@ async fn verify_global_state() {
     assert_eq!(h_times, d_times);
 
     for (timestamp, diff) in DIFFS_LOCK.read().await.iter() {
-        info(format!(
+        info!(
             "Timestamp {} contains {} added trips and {} removed trips",
             timestamp,
             diff.added_trips.len(),
             diff.removed_trip_ids.len()
-        ))
-        .await;
+        );
     }
 }
 
@@ -186,21 +181,17 @@ async fn update_loop() -> Result<(), ScheduleError> {
         if get_nyc_datetime() >= next_update {
             match get_update(Some(curr_hash), Some(&curr_schedule)).await? {
                 (Some(new_schedule), Some(new_hash)) => {
-                    info(format!("Found new update at {}", get_nyc_datetime().time(),)).await;
+                    info!("Found new update");
                     (curr_schedule, curr_hash) = (new_schedule, new_hash);
                     // TODO fix the logic on entering new day
                     update_global_state(curr_schedule.clone()).await;
                 }
                 (None, Some(new_hash)) => {
-                    info(format!(
-                        "Found immaterial new update at {}",
-                        get_nyc_datetime().time()
-                    ))
-                    .await;
+                    info!("Found no new update");
                     curr_hash = new_hash;
                 }
                 (None, None) => {
-                    info(format!("No new update at {}", get_nyc_datetime().time(),)).await
+                    info!("Found no new update");
                 }
                 u => panic!("Unexpected result: {:?}", u),
             }
@@ -213,17 +204,13 @@ async fn update_loop() -> Result<(), ScheduleError> {
 }
 
 async fn server_loop() -> Result<(), ScheduleError> {
-    info(format!("Server waiting for initial schedule")).await;
+    info!("Server waiting for initial schedule");
     // Try to get initial schedule
     while let None = *FULL_LOCK.read().await {
         sleep(Duration::new(1, 0)).await;
     }
 
-    info(format!(
-        "Server thread recieved initial schedule at {}",
-        Local::now()
-    ))
-    .await;
+    info!("Server thread recieved initial schedule");
 
     let addr = "[::1]:50052".parse()?;
 
@@ -235,40 +222,39 @@ async fn server_loop() -> Result<(), ScheduleError> {
         .serve(addr)
         .await?;
 
-    Ok(())
+    unreachable!()
 }
+
+const LOGGER_FILE: &'static str = "server.log";
 
 #[tokio::main]
 async fn main() {
-    loop {
-        info(format!("Starting new server instance")).await;
+    setup_logger!(
+        ("stdout", stdout()),
+        (
+            "file",
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(true)
+                .open(LOGGER_FILE)
+                .unwrap()
+        )
+    )
+    .unwrap();
 
-        let (comp, err) = tokio::select! {
+    loop {
+        info!("Starting new server instance");
+
+        // There are no ways for the futures to return Ok
+        if let (comp, Err(err)) = tokio::select! {
             server = server_loop() => ("Server", server),
             updater = update_loop() => ("Updater", updater),
-            logger = logger_loop() => ("Logger", logger),
-        };
-
-        eprintln!(
-            "{} thread failed at {}: {:?}",
-            comp,
-            get_nyc_datetime().time(),
-            err
-        );
-
-        if let Ok(mut file) = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(LOGGER_FILE)
-        {
-            file.write_fmt(format_args!(
-                "{} thread failed at {}: {:?}",
-                comp,
-                get_nyc_datetime().time(),
-                err
-            ))
-            .unwrap_or_else(|e| eprintln!("Unable to write error to file: {}", e))
+        } {
+            error!("{} thread failed: {}", comp, err);
+            sleep(Duration::from_secs(1)).await;
+        } else {
+            panic!();
         }
     }
 }

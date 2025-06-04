@@ -1,8 +1,9 @@
 use std::{
     collections::HashMap,
     convert::Infallible,
+    fs::OpenOptions,
     future::{Ready, ready},
-    io::Write,
+    io::{Write, stdout},
     net::SocketAddr,
     sync::LazyLock,
     time::Duration,
@@ -14,10 +15,10 @@ use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
     rt::{TokioExecutor, TokioIo, TokioTimer},
 };
-use tokio::{net::TcpListener, sync::RwLock};
+use logge_rs::{error, info, setup_logger, warn};
+use tokio::{net::TcpListener, sync::RwLock, time::sleep};
 use tonic::transport::Channel;
 use transit_server::{
-    create_logger,
     error::ScheduleError,
     shared::db_transit::{LastUpdateRequest, schedule_client::ScheduleClient},
 };
@@ -41,8 +42,6 @@ static CACHED_SCHEDULE: LazyLock<RwLock<HashMap<Vec<u8>, (Vec<u8>, HeaderMap, He
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 type BodyType = WithTrailers<Full<Bytes>, Ready<Option<Result<HeaderMap, Infallible>>>>;
-
-create_logger!("./cacher.log");
 
 async fn check_cache_validity() {
     // Send request
@@ -83,7 +82,7 @@ async fn check_cache_validity() {
     }
 
     if clearing {
-        warn(format!("Found an issue, clearing cache")).await;
+        warn!("Found an issue, clearing cache");
         CACHED_SCHEDULE.write().await.clear();
     }
 }
@@ -122,12 +121,12 @@ fn form_response(bvec: &Vec<u8>, headers: HeaderMap, trailers: HeaderMap) -> Res
 }
 
 async fn add_cached_value(key: Vec<u8>, bvec: Vec<u8>, headers: HeaderMap, trailers: HeaderMap) {
-    info(format!("Adding new request to cache")).await;
+    info!("Adding new request to cache");
 
     let mut cache = CACHED_SCHEDULE.write().await;
 
     if cache.len() >= MAX_CACHE_ENTRIES as usize {
-        warn(format!("Cache is full, refusing to add another entry")).await;
+        warn!("Cache is full, refusing to add another entry");
         return;
     }
 
@@ -138,11 +137,7 @@ async fn serve_schedule(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BodyType>, ScheduleError> {
     if req.uri().path() != GRPC_URL_PATH {
-        warn(format!(
-            "Rejecting request to endpoint: {:?}",
-            req.uri().path()
-        ))
-        .await;
+        info!("Rejecting request to endpoint: {:?}", req.uri().path());
         return Err(format!("Endpoint not supported: {:?}", req.uri().path()).into());
     }
 
@@ -152,7 +147,7 @@ async fn serve_schedule(
     let (req_body, _) = decode_body(req.into_body()).await?;
 
     if let Some((bvec, headers, trailers)) = CACHED_SCHEDULE.read().await.get(&req_body) {
-        info(format!("Cache hit found")).await;
+        info!("Cache hit found");
 
         Ok(form_response(bvec, headers.clone(), trailers.clone()))
     } else {
@@ -166,7 +161,7 @@ async fn serve_schedule(
         let upstream_req =
             upstream_req.body(Full::new(Bytes::from_iter(req_body.iter().cloned())))?;
 
-        info(format!("Forwarding request upstream: {:?}", upstream_req)).await;
+        info!("Forwarding request upstream: {:?}", upstream_req);
 
         let upstream_resp = HTTP_CLIENT.request(upstream_req).await?;
 
@@ -206,20 +201,37 @@ async fn cacher_serve_loop() -> Result<(), ScheduleError> {
                 .serve_connection(io, service_fn(serve_schedule))
                 .await
             {
-                error(format!("Error serving connection: {}", err)).await;
+                error!("Error serving connection: {}", err);
             }
         });
     }
 }
 
+const LOGGER_FILE: &'static str = "cacher.log";
+
 #[tokio::main]
 async fn main() -> Result<(), ScheduleError> {
-    loop {
-        let (comp, err) = tokio::select! {
-            server = cacher_serve_loop() => ("Cacher", server),
-            logger = logger_loop() => ("Logger", logger)
-        };
+    setup_logger!(
+        ("stdout", stdout()),
+        (
+            "file",
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(true)
+                .open(LOGGER_FILE)
+                .unwrap()
+        )
+    )
+    .unwrap();
 
-        error(format!("{} thread failed: {:?}", comp, err)).await;
+    loop {
+        if let Err(e) = cacher_serve_loop().await {
+            error!("Cacher server failed: {e}");
+
+            // In case of non-temporary failure like the main server being down, we want to avoid
+            // starting it in a tight loop for efficiency reasons
+            sleep(Duration::from_secs(1)).await;
+        }
     }
 }
