@@ -3,7 +3,7 @@ use std::{fmt::Display, net::AddrParseError};
 use tokio::sync::mpsc::error::SendError;
 use zip::result::ZipError;
 
-use crate::shared::db_transit::ScheduleResponse;
+use crate::server::db_transit::ScheduleResponse;
 
 #[derive(Debug)]
 pub enum ScheduleError {

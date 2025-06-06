@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use chrono::{Datelike, Days, NaiveDate, Weekday};
 use gtfs_parsing::schedule::{calendar::ExceptionType, trips::DirectionType};
 
-use crate::shared::{
-    db_transit::{FullSchedule, Position, Route, Shape, Stop, StopTime, Transfer, Trip},
+use crate::{
     get_nyc_datetime,
+    server::db_transit::{FullSchedule, Position, Route, Shape, Stop, StopTime, Transfer, Trip},
 };
 
 macro_rules! make_collection_wrapper_type {

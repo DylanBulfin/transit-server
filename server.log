@@ -1,0 +1,53 @@
+17:46:48.971009: [INFO]  -  Starting new server instance
+17:46:48.971585: [INFO]  -  Server waiting for initial schedule
+17:47:00.304984: [INFO]  -  Starting global state update
+17:47:02.019449: [INFO]  -  Global state contains 1 diffs
+17:47:02.019540: [INFO]  -  Timestamp 1749073620 contains 0 added trips and 0 removed trips
+17:47:02.019579: [INFO]  -  Finished global state update
+17:47:02.076422: [INFO]  -  Server thread recieved initial schedule
+18:06:16.982558: [INFO]  -  Found no new update
+18:44:13.055114: [INFO]  -  Found new update
+18:44:13.385332: [INFO]  -  Starting global state update
+18:59:36.989778: [INFO]  -  Global state contains 2 diffs
+18:59:36.989928: [INFO]  -  Timestamp 1749077053 contains 0 added trips and 0 removed trips
+18:59:36.989957: [INFO]  -  Timestamp 1749073620 contains 122 added trips and 104 removed trips
+18:59:36.989984: [INFO]  -  Finished global state update
+19:25:19.914644: [INFO]  -  Found no new update
+20:28:45.067846: [INFO]  -  Found no new update
+21:11:18.435124: [INFO]  -  Found new update
+21:26:36.485235: [INFO]  -  Starting global state update
+21:26:40.641122: [INFO]  -  Global state contains 3 diffs
+21:26:40.641238: [INFO]  -  Timestamp 1749086796 contains 0 added trips and 0 removed trips
+21:26:40.641267: [INFO]  -  Timestamp 1749077053 contains 44 added trips and 46 removed trips
+21:26:40.641293: [INFO]  -  Timestamp 1749073620 contains 166 added trips and 150 removed trips
+21:26:40.641320: [INFO]  -  Finished global state update
+22:02:08.348103: [INFO]  -  Found new update
+22:02:08.688495: [INFO]  -  Starting global state update
+22:02:16.317753: [INFO]  -  Global state contains 4 diffs
+22:02:16.318176: [INFO]  -  Timestamp 1749073620 contains 194 added trips and 177 removed trips
+22:02:16.318220: [INFO]  -  Timestamp 1749088928 contains 0 added trips and 0 removed trips
+22:02:16.318254: [INFO]  -  Timestamp 1749086796 contains 28 added trips and 27 removed trips
+22:02:16.318287: [INFO]  -  Timestamp 1749077053 contains 72 added trips and 73 removed trips
+22:02:16.318321: [INFO]  -  Finished global state update
+22:07:59.081339: [INFO]  -  Found no new update
+22:16:59.653538: [INFO]  -  Found no new update
+22:20:35.566417: [INFO]  -  Found no new update
+23:08:04.115894: [INFO]  -  Found new update
+23:08:04.362814: [INFO]  -  Starting global state update
+23:23:35.976211: [INFO]  -  Global state contains 5 diffs
+23:23:35.976980: [INFO]  -  Timestamp 1749086796 contains 37 added trips and 37 removed trips
+23:23:35.977017: [INFO]  -  Timestamp 1749073620 contains 203 added trips and 187 removed trips
+23:23:35.977044: [INFO]  -  Timestamp 1749088928 contains 9 added trips and 10 removed trips
+23:23:35.977072: [INFO]  -  Timestamp 1749092884 contains 0 added trips and 0 removed trips
+23:23:35.977098: [INFO]  -  Timestamp 1749077053 contains 81 added trips and 83 removed trips
+23:23:35.977126: [INFO]  -  Finished global state update
+01:19:34.458025: [INFO]  -  Found new update
+01:35:32.677795: [INFO]  -  Starting global state update
+01:57:03.399520: [INFO]  -  Global state contains 6 diffs
+01:57:03.400455: [INFO]  -  Timestamp 1749101732 contains 0 added trips and 0 removed trips
+01:57:03.400492: [INFO]  -  Timestamp 1749073620 contains 47439 added trips and 49061 removed trips
+01:57:03.400522: [INFO]  -  Timestamp 1749077053 contains 47439 added trips and 49079 removed trips
+01:57:03.400550: [INFO]  -  Timestamp 1749092884 contains 47439 added trips and 49077 removed trips
+01:57:03.400579: [INFO]  -  Timestamp 1749088928 contains 47439 added trips and 49078 removed trips
+01:57:03.400607: [INFO]  -  Timestamp 1749086796 contains 47439 added trips and 49077 removed trips
+01:57:03.400636: [INFO]  -  Finished global state update

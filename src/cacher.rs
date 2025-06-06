@@ -1,27 +1,26 @@
 use std::{
     collections::HashMap,
     convert::Infallible,
-    fs::OpenOptions,
     future::{Ready, ready},
-    io::{Write, stdout},
+    io::Write,
     net::SocketAddr,
     sync::LazyLock,
     time::Duration,
 };
 
+use crate::{
+    error::ScheduleError,
+    server::db_transit::{LastUpdateRequest, schedule_client::ScheduleClient},
+};
 use http_body_util::{BodyExt, Full, combinators::WithTrailers};
 use hyper::{HeaderMap, Request, Response, body::Bytes, server::conn::http2, service::service_fn};
 use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
     rt::{TokioExecutor, TokioIo, TokioTimer},
 };
-use logge_rs::{error, info, setup_logger, warn};
-use tokio::{net::TcpListener, sync::RwLock, time::sleep};
+use logge_rs::{error, info, warn};
+use tokio::{net::TcpListener, sync::RwLock};
 use tonic::transport::Channel;
-use transit_server::{
-    error::ScheduleError,
-    shared::db_transit::{LastUpdateRequest, schedule_client::ScheduleClient},
-};
 
 const GRPC_BASE_URL: &'static str = "http://localhost:50052";
 const GRPC_URL_PATH: &'static str = "/db_transit.Schedule/GetSchedule";
@@ -175,7 +174,7 @@ async fn serve_schedule(
     }
 }
 
-async fn cacher_serve_loop() -> Result<(), ScheduleError> {
+pub async fn cacher_serve_loop() -> Result<(), ScheduleError> {
     let grpc_client = ScheduleClient::connect(GRPC_BASE_URL).await?;
     *(GRPC_CLIENT.write().await) = Some(grpc_client);
 
@@ -204,34 +203,5 @@ async fn cacher_serve_loop() -> Result<(), ScheduleError> {
                 error!("Error serving connection: {}", err);
             }
         });
-    }
-}
-
-const LOGGER_FILE: &'static str = "cacher.log";
-
-#[tokio::main]
-async fn main() -> Result<(), ScheduleError> {
-    setup_logger!(
-        ("stdout", stdout()),
-        (
-            "file",
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .append(true)
-                .open(LOGGER_FILE)
-                .unwrap()
-        )
-    )
-    .unwrap();
-
-    loop {
-        if let Err(e) = cacher_serve_loop().await {
-            error!("Cacher server failed: {e}");
-
-            // In case of non-temporary failure like the main server being down, we want to avoid
-            // starting it in a tight loop for efficiency reasons
-            sleep(Duration::from_secs(1)).await;
-        }
     }
 }

@@ -1,24 +1,27 @@
-use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::{Cursor, stdout};
+use std::{collections::HashMap, sync::LazyLock};
+
+use chrono::{DateTime, Days, Timelike};
+use chrono_tz::Tz;
+
+use db_transit::schedule_server::{Schedule, ScheduleServer};
+use db_transit::{
+    FullSchedule, LastUpdateRequest, LastUpdateResponse, ScheduleDiff, ScheduleRequest,
+    ScheduleResponse,
+};
+use tokio::sync::RwLock;
+use tonic::{Request, Response, Status};
+
+use crate::diff::{core::ScheduleUpdate, ir::ScheduleIR};
+use crate::get_nyc_datetime;
+use std::io::Cursor;
 use std::time::Duration;
 
 use blake3::Hash;
-use chrono::{DateTime, Days, Timelike};
-use chrono_tz::Tz;
-use gtfs_parsing::schedule::Schedule;
-use logge_rs::{error, info, setup_logger};
+use logge_rs::{error, info};
 use tokio::time::sleep;
 use tonic::{codec::CompressionEncoding, transport::Server};
 
-use transit_server::diff::core::ScheduleUpdate;
-use transit_server::diff::ir::ScheduleIR;
-use transit_server::shared::db_transit::FullSchedule;
-use transit_server::shared::{DIFFS_LOCK, FULL_LOCK, HISTORY_LOCK, get_nyc_datetime};
-use transit_server::{
-    error::ScheduleError,
-    shared::{ScheduleService, db_transit::schedule_server::ScheduleServer},
-};
+use crate::error::ScheduleError;
 use zip::ZipArchive;
 
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
@@ -26,6 +29,66 @@ const MAX_HISTORY_LEN: usize = 10;
 
 const INTERVAL_M: u32 = 5;
 const LAST_VALID: u32 = (60 / INTERVAL_M) - 1;
+
+// Holds the history of full schedule states for current day
+pub static HISTORY_LOCK: RwLock<Vec<(u32, (ScheduleIR, ScheduleUpdate))>> =
+    RwLock::const_new(Vec::new());
+
+// Holds the full state of the schedule in GRPC format
+pub static FULL_LOCK: RwLock<Option<FullSchedule>> = RwLock::const_new(None);
+// Holds history of diffs, indexed by applicable timestamp
+pub static DIFFS_LOCK: LazyLock<RwLock<HashMap<u32, ScheduleDiff>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub mod db_transit {
+    tonic::include_proto!("db_transit"); // The string specified here must match the proto package name
+}
+
+#[derive(Debug, Default)]
+pub struct ScheduleService {}
+
+#[tonic::async_trait]
+impl Schedule for ScheduleService {
+    async fn get_schedule(
+        &self,
+        _request: Request<ScheduleRequest>,
+    ) -> Result<Response<ScheduleResponse>, Status> {
+        println!("Recieved new request at {:?}", get_nyc_datetime());
+        // Timestamp user was last updated
+        let timestamp = _request.into_inner().timestamp.unwrap_or(0);
+        let diff_map = DIFFS_LOCK.read().await;
+
+        // Timestamp for most recent state
+        let rec_timestamp: Option<u32> = HISTORY_LOCK.read().await.last().map(|(ts, _)| *ts);
+
+        if diff_map.contains_key(&timestamp) {
+            println!("Done processing new request at {:?}", get_nyc_datetime());
+            Ok(Response::new(ScheduleResponse {
+                full_schedule: None,
+                schedule_diff: diff_map.get(&timestamp).unwrap().clone().into(),
+                timestamp: rec_timestamp,
+            }))
+        } else if let Some(sched) = FULL_LOCK.read().await.clone() {
+            println!("Done processing new request at {:?}", get_nyc_datetime());
+            Ok(Response::new(ScheduleResponse {
+                full_schedule: Some(sched),
+                schedule_diff: None,
+                timestamp: rec_timestamp,
+            }))
+        } else {
+            Err(Status::new(tonic::Code::Internal, "Unable to find data"))
+        }
+    }
+
+    async fn get_last_update(
+        &self,
+        _request: Request<LastUpdateRequest>,
+    ) -> Result<Response<LastUpdateResponse>, Status> {
+        let timestamp: Option<u32> = HISTORY_LOCK.read().await.last().map(|(ts, _)| *ts);
+
+        Ok(Response::new(LastUpdateResponse { timestamp }))
+    }
+}
 
 fn get_next_update(dt: DateTime<Tz>) -> DateTime<Tz> {
     let interval = dt.minute() / INTERVAL_M;
@@ -66,9 +129,10 @@ async fn get_update(
         // No need to update, hash is the same as previous
         Ok((None, None))
     } else {
-        let schedule: ScheduleIR = Schedule::from_zip(ZipArchive::new(Cursor::new(resp))?, None)
-            .ok_or("Unable to parse server response")?
-            .into();
+        let schedule: ScheduleIR =
+            gtfs_parsing::schedule::Schedule::from_zip(ZipArchive::new(Cursor::new(resp))?, None)
+                .ok_or("Unable to parse server response")?
+                .into();
 
         // Check equality directly, we can save a lot of space if updates are infrequent
         if old_schedule.is_some() && old_schedule.unwrap() == &schedule {
@@ -166,7 +230,7 @@ async fn verify_global_state() {
     }
 }
 
-async fn update_loop() -> Result<(), ScheduleError> {
+pub async fn update_loop() -> Result<(), ScheduleError> {
     let update = get_update(None, None).await?;
     let (mut curr_schedule, mut curr_hash) = (
         update.0.expect("Unable to get initial schedule"),
@@ -203,7 +267,7 @@ async fn update_loop() -> Result<(), ScheduleError> {
     }
 }
 
-async fn server_loop() -> Result<(), ScheduleError> {
+pub async fn server_loop() -> Result<(), ScheduleError> {
     info!("Server waiting for initial schedule");
     // Try to get initial schedule
     while let None = *FULL_LOCK.read().await {
@@ -223,38 +287,4 @@ async fn server_loop() -> Result<(), ScheduleError> {
         .await?;
 
     unreachable!()
-}
-
-const LOGGER_FILE: &'static str = "server.log";
-
-#[tokio::main]
-async fn main() {
-    setup_logger!(
-        ("stdout", stdout()),
-        (
-            "file",
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .append(true)
-                .open(LOGGER_FILE)
-                .unwrap()
-        )
-    )
-    .unwrap();
-
-    loop {
-        info!("Starting new server instance");
-
-        // There are no ways for the futures to return Ok
-        if let (comp, Err(err)) = tokio::select! {
-            server = server_loop() => ("Server", server),
-            updater = update_loop() => ("Updater", updater),
-        } {
-            error!("{} thread failed: {}", comp, err);
-            sleep(Duration::from_secs(1)).await;
-        } else {
-            panic!();
-        }
-    }
 }

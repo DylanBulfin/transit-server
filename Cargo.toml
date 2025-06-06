@@ -8,11 +8,11 @@ name = "transit_server"
 
 [[bin]] # Bin to run the transit gRPC server
 name = "server"
-path = "src/server.rs"
+path = "src/bin/server.rs"
 
 [[bin]]
 name = "cacher"
-path = "src/cacher.rs"
+path = "src/bin/cacher.rs"
 
 [dependencies]
 # gRPC server

@@ -1,10 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use crate::shared::db_transit::{ScheduleDiff, Shape, Stop, TripExt, TripIdTuple};
+use crate::server::db_transit::{ScheduleDiff, Shape, Stop, TripExt, TripIdTuple};
 
 use super::ir::{ScheduleIR, TripIR};
-
 
 impl ScheduleIR {
     // In in this situation self is the newest
