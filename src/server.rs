@@ -125,22 +125,22 @@ async fn get_update(
 
     let hash = blake3::hash(resp.as_slice());
 
-    if old_hash.is_some() && old_hash.unwrap() == hash {
-        // No need to update, hash is the same as previous
-        Ok((None, None))
-    } else {
-        let schedule: ScheduleIR =
-            gtfs_parsing::schedule::Schedule::from_zip(ZipArchive::new(Cursor::new(resp))?, None)
-                .ok_or("Unable to parse server response")?
-                .into();
+    // if old_hash.is_some() && old_hash.unwrap() == hash {
+    //     // No need to update, hash is the same as previous
+    //     Ok((None, None))
+    // } else {
+    let schedule: ScheduleIR =
+        gtfs_parsing::schedule::Schedule::from_zip(ZipArchive::new(Cursor::new(resp))?, None)
+            .ok_or("Unable to parse server response")?
+            .into();
 
-        // Check equality directly, we can save a lot of space if updates are infrequent
-        if old_schedule.is_some() && old_schedule.unwrap() == &schedule {
-            Ok((None, Some(hash)))
-        } else {
-            Ok((Some(schedule), Some(hash)))
-        }
-    }
+    // // Check equality directly, we can save a lot of space if updates are infrequent
+    // if old_schedule.is_some() && old_schedule.unwrap() == &schedule {
+    //     Ok((None, Some(hash)))
+    // } else {
+    Ok((Some(schedule), Some(hash)))
+    // }
+    // }
 }
 
 async fn update_global_state(schedule: ScheduleIR) {
@@ -156,8 +156,11 @@ async fn update_global_state(schedule: ScheduleIR) {
 
         // Remove the first entry
         if history_locked.len() == MAX_HISTORY_LEN {
-            let (ts, _) = history_locked.remove(0);
-            diffs_locked.remove(&ts);
+            let (ts, os) = history_locked.remove(0);
+            let od = diffs_locked.remove(&ts);
+
+            drop(os);
+            drop(od);
         }
 
         let prev_diff: ScheduleUpdate = schedule.get_diff(
