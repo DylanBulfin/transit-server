@@ -9,6 +9,7 @@ use db_transit::{
     FullSchedule, LastUpdateRequest, LastUpdateResponse, ScheduleDiff, ScheduleRequest,
     ScheduleResponse,
 };
+use tokio::runtime::{Handle, RuntimeMetrics};
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 
@@ -260,6 +261,9 @@ pub async fn update_loop() -> Result<(), ScheduleError> {
     let mut next_update = get_next_update(get_nyc_datetime());
 
     loop {
+        let metrics = Handle::current().metrics();
+        println!("{}", metrics.num_alive_tasks());
+
         if get_nyc_datetime() >= next_update {
             match get_update(Some(curr_hash), Some(&curr_schedule)).await? {
                 (Some(new_schedule), Some(new_hash)) => {
