@@ -1,3 +1,4 @@
+use std::ops::DerefMut;
 use std::{collections::HashMap, sync::LazyLock};
 
 use chrono::{DateTime, Days, Timelike};
@@ -177,7 +178,9 @@ async fn update_global_state(schedule: ScheduleIR) {
 
         let full_schedule: FullSchedule = schedule.clone().into();
 
-        *(FULL_LOCK.write().await) = Some(full_schedule);
+        let old_schedule =
+            std::mem::replace(FULL_LOCK.write().await.deref_mut(), Some(full_schedule));
+        drop(old_schedule);
 
         let mut diffs_map = HashMap::new();
         for (p_timestamp, (p_schedule, p_update)) in history_locked.iter_mut() {
@@ -195,10 +198,12 @@ async fn update_global_state(schedule: ScheduleIR) {
 
             diffs_map.insert(*p_timestamp, schedule.get_diff(p_schedule).into());
 
-            *p_update = update;
+            let t = std::mem::replace(p_update, update);
+            drop(t);
         }
 
-        *diffs_locked = diffs_map;
+        let t = std::mem::replace(diffs_locked.deref_mut(), diffs_map);
+        drop(t);
     }
 
     verify_global_state().await;
@@ -230,6 +235,16 @@ async fn verify_global_state() {
             diff.added_trips.len(),
             diff.removed_trip_ids.len()
         );
+    }
+
+    for (timestamp, (ir, diff)) in HISTORY_LOCK.read().await.iter() {
+        info!(
+            "Timestamp {} ir contains {} trips, update contains {} added trips and {} removed trips",
+            timestamp,
+            ir.routes.values().map(|r| r.trips.len()).sum::<usize>(),
+            diff.added_trips.len(),
+            diff.removed_trip_ids.len()
+        )
     }
 }
 
