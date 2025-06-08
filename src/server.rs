@@ -249,7 +249,7 @@ async fn verify_global_state() {
     }
 }
 
-pub async fn update_loop() -> Result<(), ScheduleError> {
+pub async fn update_loop(metrics: RuntimeMetrics) -> Result<(), ScheduleError> {
     let update = get_update(None, None).await?;
     let (mut curr_schedule, mut curr_hash) = (
         update.0.expect("Unable to get initial schedule"),
@@ -261,7 +261,6 @@ pub async fn update_loop() -> Result<(), ScheduleError> {
     let mut next_update = get_next_update(get_nyc_datetime());
 
     loop {
-        let metrics = Handle::current().metrics();
         info!("Tokio has {} active tasks", metrics.num_alive_tasks());
 
         if get_nyc_datetime() >= next_update {
