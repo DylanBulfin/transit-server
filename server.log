@@ -51,3 +51,5 @@
 01:57:03.400579: [INFO]  -  Timestamp 1749088928 contains 47439 added trips and 49078 removed trips
 01:57:03.400607: [INFO]  -  Timestamp 1749086796 contains 47439 added trips and 49077 removed trips
 01:57:03.400636: [INFO]  -  Finished global state update
+2025-06-08 09:15:39.524003689 -04:00: [INFO]  -  Starting new server instance
+2025-06-08 09:15:39.532705514 -04:00: [INFO]  -  Server waiting for initial schedule
