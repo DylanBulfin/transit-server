@@ -27,7 +27,7 @@ use zip::ZipArchive;
 const SUPP_URL: &'static str = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_supplemented.zip";
 const MAX_HISTORY_LEN: usize = 10;
 
-const INTERVAL_M: u32 = 5;
+const INTERVAL_M: u32 = 1;
 const LAST_VALID: u32 = (60 / INTERVAL_M) - 1;
 
 // Holds the history of full schedule states for current day
