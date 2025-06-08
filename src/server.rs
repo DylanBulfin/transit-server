@@ -262,7 +262,7 @@ pub async fn update_loop() -> Result<(), ScheduleError> {
 
     loop {
         let metrics = Handle::current().metrics();
-        println!("{}", metrics.num_alive_tasks());
+        info!("Tokio has {} active tasks", metrics.num_alive_tasks());
 
         if get_nyc_datetime() >= next_update {
             match get_update(Some(curr_hash), Some(&curr_schedule)).await? {
