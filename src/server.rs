@@ -203,8 +203,15 @@ async fn update_global_state(schedule: ScheduleIR) {
             drop(t);
         }
 
-        let t = std::mem::replace(diffs_locked.deref_mut(), diffs_map);
-        drop(t);
+        *diffs_locked = diffs_map;
+
+        // diffs_locked.shrink_to_fit();
+        // history_locked.shrink_to_fit();
+        println!(
+            "Diffs capacity: {}, history capacity: {}",
+            diffs_locked.capacity(),
+            history_locked.capacity()
+        );
     }
 
     verify_global_state().await;
