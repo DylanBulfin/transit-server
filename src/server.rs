@@ -212,6 +212,43 @@ async fn update_global_state(schedule: ScheduleIR) {
             diffs_locked.capacity(),
             history_locked.capacity()
         );
+
+        println!(
+            "Diffs nested capacity: {}, history diff capacity: {}, routes capacity: {}, other schedule capacity: {}",
+            diffs_locked
+                .values()
+                .map(|d| d.added_trips.capacity()
+                    + d.added_stops.capacity()
+                    + d.added_shapes.capacity()
+                    + d.removed_trip_ids.capacity()
+                    + d.removed_stop_ids.capacity()
+                    + d.removed_shape_ids.capacity())
+                .sum::<usize>(),
+            history_locked
+                .iter()
+                .map(|(_, (_, up))| up.added_trips.capacity()
+                    + up.added_stops.capacity()
+                    + up.added_shapes.capacity()
+                    + up.removed_trip_ids.capacity()
+                    + up.removed_stop_ids.capacity()
+                    + up.removed_shape_ids.capacity())
+                .sum::<usize>(),
+            history_locked
+                .iter()
+                .map(|(_, (ir, _))| ir.routes.capacity())
+                .sum::<usize>(),
+            history_locked
+                .iter()
+                .map(|(_, (ir, _))| ir
+                    .routes
+                    .values()
+                    .flat_map(|r| r.trips.values())
+                    .map(|t| t.stop_times.capacity())
+                    .sum::<usize>()
+                    + ir.shapes.capacity()
+                    + ir.stops.capacity())
+                .sum::<usize>(),
+        );
     }
 
     verify_global_state().await;
@@ -256,7 +293,7 @@ async fn verify_global_state() {
     }
 }
 
-pub async fn update_loop(metrics: RuntimeMetrics) -> Result<(), ScheduleError> {
+pub async fn update_loop() -> Result<(), ScheduleError> {
     let update = get_update(None, None).await?;
     let (mut curr_schedule, mut curr_hash) = (
         update.0.expect("Unable to get initial schedule"),
@@ -268,8 +305,6 @@ pub async fn update_loop(metrics: RuntimeMetrics) -> Result<(), ScheduleError> {
     let mut next_update = get_next_update(get_nyc_datetime());
 
     loop {
-        info!("Tokio has {} active tasks", metrics.num_alive_tasks());
-
         if get_nyc_datetime() >= next_update {
             match get_update(Some(curr_hash), Some(&curr_schedule)).await? {
                 (Some(new_schedule), Some(new_hash)) => {
