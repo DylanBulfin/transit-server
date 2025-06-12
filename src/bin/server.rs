@@ -9,16 +9,15 @@ const LOGGER_FILE: &'static str = "server.log";
 #[tokio::main]
 async fn main() {
     setup_logger!(
-        ("stdout", stdout()),
-        (
-            "file",
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .append(true)
-                .open(LOGGER_FILE)
-                .unwrap()
-        )
+        ("stdout", stdout()) // (
+                             //     "file",
+                             //     OpenOptions::new()
+                             //         .create(true)
+                             //         .write(true)
+                             //         .append(true)
+                             //         .open(LOGGER_FILE)
+                             //         .unwrap()
+                             // )
     )
     .unwrap();
 

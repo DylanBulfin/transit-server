@@ -326,10 +326,10 @@ pub async fn update_loop() -> Result<(), ScheduleError> {
             next_update = get_next_update(get_nyc_datetime());
         }
 
-        sleep(Duration::new(1, 0)).await;
-        info!(
-            "Trying to recreate memory issue so this is like, a very long line and if i print it every second the idea is that, if the file issue is the true issue, the issue will pop up more quickly. "
-        );
+        sleep(Duration::new(30, 0)).await;
+        // info!(
+        //     "Trying to recreate memory issue so this is like, a very long line and if i print it every second the idea is that, if the file issue is the true issue, the issue will pop up more quickly. "
+        // );
     }
 }
 
